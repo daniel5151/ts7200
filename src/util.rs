@@ -1,14 +1,31 @@
+use std::ops::{Deref, DerefMut};
+
 use log::info;
 
 use crate::memory::{MemResult, Memory};
 
 /// A transparent wrapper around memory objects that logs any reads / writes
+#[derive(Debug)]
 pub struct MemLogger<M: Memory>(M);
 
 impl<M: Memory> MemLogger<M> {
     #[allow(dead_code)]
     pub fn new(memory: M) -> MemLogger<M> {
         MemLogger(memory)
+    }
+}
+
+impl<T: Memory> Deref for MemLogger<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Memory> DerefMut for MemLogger<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

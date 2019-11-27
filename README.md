@@ -6,7 +6,7 @@ AKA: _choo_choo_emu_ 🚂
 
 ## Disclaimer
 
-The primary purpose of this emulator is to enable rapid prototyping and development of the CS 452 kernel without having to _live_ at the Trains lab. That said, at the end of the day, you won't be marked on how well your kernel run in this emulator, you'll be marked on how well your kernel runs on the _actual hardware in the trains lab!_
+The primary purpose of this emulator is to enable rapid prototyping and development of the CS 452 kernel without having to literally _live_ in the Trains lab. That said, at the end of the day, you won't be marked on how well your kernel runs in this emulator, you'll be marked on how well your kernel runs on the actual hardware in the trains lab!
 
 Instruction timings and hardware access times are _waaay_ off, so any profiling/benchmarking performed in the emulator won't be representative of the real hardware whatsoever.
 

@@ -1,36 +1,42 @@
+/// Kinds of Memory exceptions
 #[derive(Debug, Copy, Clone)]
-pub enum AccessViolationKind {
+pub enum MemExceptionKind {
     /// Attempted to access a device at an invalid offset
     Misaligned,
     /// Memory location that shouldn't have been accessed
     Unexpected,
     /// Memory location hasn't been implemented
     Unimplemented,
+    /// Memory location is using a stubbed read implementation
+    StubRead(u32),
+    /// Memory location is using a stubbed write implementation
+    StubWrite,
 }
 
-#[derive(Debug)]
+/// Memory Access Kind (Read of Write)
+#[derive(Debug, Copy, Clone)]
 pub enum AccessKind {
     Read,
     Write,
 }
 
-/// Denotes some sort of memory access faliure
-#[derive(Debug)]
-pub struct AccessViolation {
+/// Denotes some sort of memory access exception. May be recoverable.
+#[derive(Debug, Clone)]
+pub struct MemException {
     access_kind: Option<AccessKind>,
     identifier: String,
     addr: u32,
-    kind: AccessViolationKind,
+    kind: MemExceptionKind,
 }
 
-impl AccessViolation {
-    /// Create a new AccessViolation error from a given identifier, offset, and
+impl MemException {
+    /// Create a new MemException error from a given identifier, offset, and
     /// kind.
     ///
     /// Use the methods in [MemResultExt] to update the error as it propogates
     /// up the device heirarchy.
-    pub fn new(identifier: String, offset: u32, kind: AccessViolationKind) -> AccessViolation {
-        AccessViolation {
+    pub fn new(identifier: String, offset: u32, kind: MemExceptionKind) -> MemException {
+        MemException {
             access_kind: None,
             identifier,
             addr: offset,
@@ -44,7 +50,7 @@ impl AccessViolation {
     }
 
     /// The kind of access violation
-    pub fn kind(&self) -> AccessViolationKind {
+    pub fn kind(&self) -> MemExceptionKind {
         self.kind
     }
 
@@ -54,6 +60,11 @@ impl AccessViolation {
         &self.identifier
     }
 
+    /// The access kind of access violation (Read or Write)
+    pub fn access_kind(&self) -> Option<AccessKind> {
+        self.access_kind
+    }
+
     /// Specify if this was a read or write
     pub fn with_access_kind(mut self, access_kind: AccessKind) -> Self {
         self.access_kind = Some(access_kind);
@@ -61,7 +72,7 @@ impl AccessViolation {
     }
 }
 
-pub type MemResult<T> = Result<T, AccessViolation>;
+pub type MemResult<T> = Result<T, MemException>;
 
 /// Utility methods to make working with MemResults more ergonomic
 pub trait MemResultExt {
@@ -89,35 +100,9 @@ impl<T> MemResultExt for MemResult<T> {
     }
 }
 
-/// Utility macro to construct a [AccessViolationKind::Unexpected] error
-/// unexpected offset.
-#[macro_export]
-macro_rules! unexpected_offset {
-    ($offset:expr) => {
-        Err(crate::memory::AccessViolation::new(
-            "<unexpected offset>".to_string(),
-            $offset,
-            crate::memory::AccessViolationKind::Unexpected,
-        ))
-    };
-}
-
-/// Utility macro to construct a [AccessViolationKind::Unimplemented] error
-/// unimplemented offset.
-#[macro_export]
-macro_rules! unimplemented_offset {
-    ($offset:expr, $friendlyname:expr) => {
-        Err(crate::memory::AccessViolation::new(
-            $friendlyname.to_string(),
-            $offset,
-            crate::memory::AccessViolationKind::Unimplemented,
-        ))
-    };
-}
-
-/// Common memory trait used throughout Clicky.
+/// Common memory trait used throughout the emulator.
 /// Default implementations for 8-bit and 16-bit read/write is to return a
-/// [AccessViolation::Misaligned]
+/// [MemException::Misaligned]
 pub trait Memory {
     /// The underlying device type
     fn device(&self) -> &str;
@@ -144,10 +129,10 @@ pub trait Memory {
     /// Read a 8 bit value at a given offset
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::AccessViolation::new(
+            Err(crate::memory::MemException::new(
                 self.identifier(),
                 offset,
-                crate::memory::AccessViolationKind::Misaligned,
+                crate::memory::MemExceptionKind::Misaligned,
             ))
         } else {
             Memory::r32(self, offset).map(|v| v as u8)
@@ -157,10 +142,10 @@ pub trait Memory {
     /// Read a 16 bit value at a given offset
     fn r16(&mut self, offset: u32) -> MemResult<u16> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::AccessViolation::new(
+            Err(crate::memory::MemException::new(
                 self.identifier(),
                 offset,
-                crate::memory::AccessViolationKind::Misaligned,
+                crate::memory::MemExceptionKind::Misaligned,
             ))
         } else {
             Memory::r32(self, offset).map(|v| v as u16)
@@ -170,10 +155,10 @@ pub trait Memory {
     /// Write a 8 bit value to the given offset
     fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::AccessViolation::new(
+            Err(crate::memory::MemException::new(
                 self.identifier(),
                 offset,
-                crate::memory::AccessViolationKind::Misaligned,
+                crate::memory::MemExceptionKind::Misaligned,
             ))
         } else {
             Memory::w32(self, offset, val as u32)
@@ -183,10 +168,10 @@ pub trait Memory {
     /// Write a 16 bit value to the given offset
     fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::AccessViolation::new(
+            Err(crate::memory::MemException::new(
                 self.identifier(),
                 offset,
-                crate::memory::AccessViolationKind::Misaligned,
+                crate::memory::MemExceptionKind::Misaligned,
             ))
         } else {
             Memory::w32(self, offset, val as u32)
@@ -214,12 +199,15 @@ impl Memory for Box<dyn Memory> {
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         (**self).r8(offset)
     }
+
     fn r16(&mut self, offset: u32) -> MemResult<u16> {
         (**self).r16(offset)
     }
+
     fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
         (**self).w8(offset, val)
     }
+
     fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
         (**self).w16(offset, val)
     }

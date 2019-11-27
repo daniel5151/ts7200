@@ -6,6 +6,7 @@ use log::*;
 
 pub mod debugger;
 pub mod devices;
+pub mod macros;
 pub mod memory;
 pub mod ts7200;
 pub mod util;
@@ -51,10 +52,45 @@ fn main() -> std::io::Result<()> {
             return Ok(());
         }
 
+        #[allow(clippy::single_match)]
+        match pc {
+            // 0x0021_9064 => step_through = true,
+            _ => {}
+        }
+
+        // quick-and-dirty step through
+        if step_through {
+            if let Some(ref mut debugger) = debugger {
+                match debugger.lookup(pc) {
+                    Some(info) => debug!("{}", info),
+                    None => debug!("{:#010x?}: ???", pc),
+                }
+            }
+
+            loop {
+                let c = std::io::stdin().bytes().next().unwrap().unwrap();
+                // consume the newline
+                if c as char != '\n' {
+                    std::io::stdin().bytes().next().unwrap().unwrap();
+                }
+
+                match c as char {
+                    'r' => step_through = false,
+                    'c' => {
+                        eprintln!("{:#x?}", system);
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                break;
+            }
+        }
+
         if let Err(fatal_error) = system.cycle() {
             eprintln!("Fatal Error!");
             eprintln!("============");
-            eprintln!("{:#x?}", system);
+            eprintln!("{:#010x?}", system);
             if let Some(ref mut debugger) = debugger {
                 match debugger.lookup(pc) {
                     Some(info) => eprintln!("{}", info),
@@ -63,34 +99,6 @@ fn main() -> std::io::Result<()> {
             }
             eprintln!("{:#010x?}", fatal_error);
             panic!();
-        }
-
-        // #[allow(clippy::single_match)]
-        // match pc {
-        //     0x0004_5070 => step_through = true,
-        //     _ => {}
-        // }
-
-        // quick-and-dirty step through
-        if step_through {
-            if let Some(ref mut debugger) = debugger {
-                match debugger.lookup(pc) {
-                    Some(info) => debug!("{}", info),
-                    None => debug!("???"),
-                }
-            }
-
-            let c = std::io::stdin().bytes().next().unwrap().unwrap();
-            match c as char {
-                'r' => step_through = false,
-                's' => step_through = true,
-                _ => {}
-            }
-
-            // consume the newline
-            if c as char != '\n' {
-                std::io::stdin().bytes().next().unwrap().unwrap();
-            }
         }
     }
 }

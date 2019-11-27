@@ -45,7 +45,7 @@ impl Memory for Uart {
     }
 
     fn device(&self) -> &str {
-        "uart"
+        "UART"
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
@@ -62,29 +62,26 @@ impl Memory for Uart {
                 None => Ok(0),
             },
             // read status
-            0x04 => crate::unimplemented_offset!(offset, "RSR_REG"),
+            0x04 => crate::mem_unimpl!("RSR_REG"),
             // line control high
-            0x08 => {
-                // XXX: properly implement UART LCRH read
-                Ok(0)
-            }
+            0x08 => crate::mem_stub!("LCRH_REG", 0),
             // line control mid
-            0x0C => crate::unimplemented_offset!(offset, "LCRM_REG"),
+            0x0C => crate::mem_unimpl!("LCRM_REG"),
             // line control low
-            0x10 => crate::unimplemented_offset!(offset, "LCRL_REF"),
+            0x10 => crate::mem_unimpl!("LCRL_REG"),
             // control
-            0x14 => crate::unimplemented_offset!(offset, "CTLR_REG"),
+            0x14 => crate::mem_stub!("CTLR_REG", 0),
             // flag
             0x18 => {
-                // XXX: properly implement UART FLAG_REG read
-                // set flag as through there's always something to receive
+                // XXX: properly implement UART DATA read (i.e: respect flags)
+                // 0x40 => always something to receive
                 Ok(0x40)
             }
             // interrupt identification and clear register
-            0x1C => crate::unimplemented_offset!(offset, "INTR_REG"),
+            0x1C => crate::mem_unimpl!("INTR_REG"),
             // dma control
-            0x28 => crate::unimplemented_offset!(offset, "DMAR_REG"),
-            _ => crate::unexpected_offset!(offset),
+            0x28 => crate::mem_unimpl!("DMAR_REG"),
+            _ => crate::mem_unexpected!(),
         }
         .map_memerr_ctx(offset, self)
     }
@@ -101,25 +98,22 @@ impl Memory for Uart {
                 None => Ok(()),
             },
             // read status
-            0x04 => crate::unimplemented_offset!(offset, "RSR_REG"),
+            0x04 => crate::mem_unimpl!("RSR_REG"),
             // line control high
-            0x08 => {
-                // XXX: properly implement UART LCRH_REG write
-                Ok(())
-            }
+            0x08 => crate::mem_stub!("LCRH_REG"),
             // line control mid
-            0x0C => crate::unimplemented_offset!(offset, "LCRM_REG"),
+            0x0C => crate::mem_stub!("LCRM_REG"),
             // line control low
-            0x10 => crate::unimplemented_offset!(offset, "LCRL_REF"),
+            0x10 => crate::mem_stub!("LCRL_REG"),
             // control
-            0x14 => crate::unimplemented_offset!(offset, "CTLR_REG"),
+            0x14 => crate::mem_stub!("CTLR_REG"),
             // flag
-            0x18 => crate::unimplemented_offset!(offset, "FLAG_REG"),
+            0x18 => crate::mem_unimpl!("FLAG_REG"),
             // interrupt identification and clear register
-            0x1C => crate::unimplemented_offset!(offset, "INTR_REG"),
+            0x1C => crate::mem_unimpl!("INTR_REG"),
             // dma control
-            0x28 => crate::unimplemented_offset!(offset, "DMAR_REG"),
-            _ => crate::unexpected_offset!(offset),
+            0x28 => crate::mem_unimpl!("DMAR_REG"),
+            _ => crate::mem_unexpected!(),
         }
         .map_memerr_ctx(offset, self)
     }

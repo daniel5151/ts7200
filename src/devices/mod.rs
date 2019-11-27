@@ -1,24 +1,36 @@
 pub mod ram;
+pub mod timer;
 pub mod uart;
+pub mod vic;
 
 pub use ram::Ram;
+pub use timer::Timer;
 pub use uart::Uart;
+pub use vic::Vic;
 
 use crate::memory::{MemResult, Memory};
 
-/// A device which returns an AccessViolation::Unimplemented when accessed
+/// A "device" which returns an MemError::Unexpected when accessed
 #[derive(Debug)]
-pub struct Stub;
+pub struct UnmappedMemory;
 
-impl Memory for Stub {
+impl Memory for UnmappedMemory {
     fn device(&self) -> &str {
         "<unmapped memory>"
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
-        crate::unexpected_offset!(offset)
+        Err(crate::memory::MemException::new(
+            self.identifier(),
+            offset,
+            crate::memory::MemExceptionKind::Unexpected,
+        ))
     }
     fn w32(&mut self, offset: u32, _: u32) -> MemResult<()> {
-        crate::unexpected_offset!(offset)
+        Err(crate::memory::MemException::new(
+            self.identifier(),
+            offset,
+            crate::memory::MemExceptionKind::Unexpected,
+        ))
     }
 }

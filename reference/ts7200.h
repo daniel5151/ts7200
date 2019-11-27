@@ -69,6 +69,9 @@
     #define RXFF_MASK   0x40    // Receive buffer full
     #define TXFE_MASK   0x80    // Transmit buffer empty
 #define UART_INTR_OFFSET    0x1c
+  #define UART_INTR_MS    0x1
+  #define UART_INTR_RX    0x2
+  #define UART_INTR_TX    0x4
 #define UART_DMAR_OFFSET    0x28
 
 // Specific to UART1
@@ -80,3 +83,24 @@
 #define UART_HDLCAM_OFFSET  0x214
 #define UART_HDLCRIB_OFFSET 0x218
 #define UART_HDLCSTS_OFFSET 0x21c
+
+// Interrupt stuff
+#define VIC1_BASE 0x800B0000
+#define VIC2_BASE 0x800C0000
+
+#define VIC_STATUS_OFFSET 0x0
+#define VIC_ENABLE_OFFSET 0x10
+#define VIC_CLEAR_OFFSET 0x14
+
+// VIC1
+#define INTERRUPT_TIMER1 4
+#define INTERRUPT_TIMER2 5
+#define INTERRUPT_UART1_RX 23
+#define INTERRUPT_UART1_TX 24
+#define INTERRUPT_UART2_RX 25
+#define INTERRUPT_UART2_TX 26
+// VIC2
+#define INTERRUPT_1HZ 42
+#define INTERRUPT_TIMER3 51
+#define INTERRUPT_UART1 52
+#define INTERRUPT_UART2 54
