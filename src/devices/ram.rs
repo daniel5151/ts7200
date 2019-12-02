@@ -35,7 +35,7 @@ impl Ram {
 }
 
 impl Memory for Ram {
-    fn device(&self) -> &str {
+    fn device(&self) -> &'static str {
         "Ram"
     }
 

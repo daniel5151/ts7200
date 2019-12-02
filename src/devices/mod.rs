@@ -15,7 +15,7 @@ use crate::memory::{MemResult, Memory};
 pub struct UnmappedMemory;
 
 impl Memory for UnmappedMemory {
-    fn device(&self) -> &str {
+    fn device(&self) -> &'static str {
         "<unmapped memory>"
     }
 

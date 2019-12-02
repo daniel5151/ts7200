@@ -44,7 +44,7 @@ impl Memory for Uart {
         Some(self.label)
     }
 
-    fn device(&self) -> &str {
+    fn device(&self) -> &'static str {
         "UART"
     }
 
@@ -83,7 +83,7 @@ impl Memory for Uart {
             0x28 => crate::mem_unimpl!("DMAR_REG"),
             _ => crate::mem_unexpected!(),
         }
-        .map_memerr_ctx(offset, self)
+        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
@@ -115,6 +115,6 @@ impl Memory for Uart {
             0x28 => crate::mem_unimpl!("DMAR_REG"),
             _ => crate::mem_unexpected!(),
         }
-        .map_memerr_ctx(offset, self)
+        .mem_ctx(offset, self)
     }
 }

@@ -9,7 +9,6 @@ pub mod devices;
 pub mod macros;
 pub mod memory;
 pub mod ts7200;
-pub mod util;
 
 use arm7tdmi_rs::reg;
 use ts7200::{Ts7200, HLE_BOOTLOADER_LR};

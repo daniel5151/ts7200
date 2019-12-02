@@ -26,7 +26,7 @@ impl Memory for Timer {
         Some(self.label)
     }
 
-    fn device(&self) -> &str {
+    fn device(&self) -> &'static str {
         "Timer"
     }
 
@@ -38,7 +38,7 @@ impl Memory for Timer {
             0x0C => crate::mem_unimpl!("CLR_REG"),
             _ => crate::mem_unexpected!(),
         }
-        .map_memerr_ctx(offset, self)
+        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, _val: u32) -> MemResult<()> {
@@ -49,6 +49,6 @@ impl Memory for Timer {
             0x0C => crate::mem_unimpl!("CLR_REG"),
             _ => crate::mem_unexpected!(),
         }
-        .map_memerr_ctx(offset, self)
+        .mem_ctx(offset, self)
     }
 }

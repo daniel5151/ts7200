@@ -26,7 +26,7 @@ impl Memory for Vic {
         Some(self.label)
     }
 
-    fn device(&self) -> &str {
+    fn device(&self) -> &'static str {
         "VIC"
     }
 
@@ -37,7 +37,7 @@ impl Memory for Vic {
             0x14 => crate::mem_unimpl!("CLEAR_REG"),
             _ => crate::mem_unexpected!(),
         }
-        .map_memerr_ctx(offset, self)
+        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, _val: u32) -> MemResult<()> {
@@ -47,6 +47,6 @@ impl Memory for Vic {
             0x14 => crate::mem_stub!("CLEAR_REG"),
             _ => crate::mem_unexpected!(),
         }
-        .map_memerr_ctx(offset, self)
+        .mem_ctx(offset, self)
     }
 }
