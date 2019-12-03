@@ -16,9 +16,9 @@ pub enum MemAccessKind {
 /// Encodes a memory access (read/write)
 #[derive(Debug, Clone, Copy)]
 pub struct MemAccess {
-    kind: MemAccessKind,
-    offset: u32,
-    val: MemAccessVal,
+    pub kind: MemAccessKind,
+    pub offset: u32,
+    pub val: MemAccessVal,
 }
 
 macro_rules! impl_memaccess {

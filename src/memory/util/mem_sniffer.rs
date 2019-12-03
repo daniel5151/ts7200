@@ -1,22 +1,23 @@
 use crate::memory::{MemAccess, MemResult, Memory};
 
-/// [MemSniffer] wraps a [Memory] object, recording any memory accesses
+/// [MemSniffer] wraps a [Memory] object, forwarding requests to the underlying
+/// memory object, while also recording accesses into the provided buffer.
+///
+/// Panics if the provided buffer overflows.
 #[derive(Debug)]
 pub struct MemSniffer<'a, M: Memory> {
     mem: &'a mut M,
-    last_access: Option<MemAccess>,
+    accesses: &'a mut [Option<MemAccess>],
+    i: usize,
 }
 
 impl<'a, M: Memory> MemSniffer<'a, M> {
-    pub fn new(mem: &'a mut M) -> MemSniffer<'a, M> {
+    pub fn new(mem: &'a mut M, accesses: &'a mut [Option<MemAccess>]) -> MemSniffer<'a, M> {
         MemSniffer {
             mem,
-            last_access: None,
+            accesses,
+            i: 0,
         }
-    }
-
-    pub fn take_last_access(&mut self) -> Option<MemAccess> {
-        self.last_access.take()
     }
 }
 
@@ -24,7 +25,8 @@ macro_rules! impl_memsniff_r {
     ($fn:ident, $ret:ty) => {
         fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
             let ret = self.mem.$fn(addr)?;
-            self.last_access = Some(MemAccess::$fn(addr, ret));
+            self.accesses[self.i] = Some(MemAccess::$fn(addr, ret));
+            self.i += 1;
             Ok(ret)
         }
     };
@@ -34,7 +36,8 @@ macro_rules! impl_memsniff_w {
     ($fn:ident, $val:ty) => {
         fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
             self.mem.$fn(addr, val)?;
-            self.last_access = Some(MemAccess::$fn(addr, val));
+            self.accesses[self.i] = Some(MemAccess::$fn(addr, val));
+            self.i += 1;
             Ok(())
         }
     };

@@ -4,7 +4,10 @@ use arm7tdmi_rs::{reg, Cpu, Memory as ArmMemory};
 use log::*;
 
 use crate::devices;
-use crate::memory::{MemException, MemExceptionKind, MemResult, MemResultExt, Memory};
+use crate::memory::{
+    util::MemSniffer, MemAccessKind, MemAccessVal, MemException, MemExceptionKind, MemResult,
+    MemResultExt, Memory,
+};
 
 // TODO: improve bootloader initial SP and LR values
 pub const HLE_BOOTLOADER_SP: u32 = 0x0100_0000;
@@ -18,6 +21,7 @@ pub enum FatalError {
 /// A Ts7200 system
 #[derive(Debug)]
 pub struct Ts7200 {
+    hle: bool,
     cpu: Cpu,
     devices: Ts7200Bus,
 }
@@ -79,10 +83,14 @@ impl Ts7200 {
 
         // TODO: instantiate various hardware devices to HLE state
 
-        Ok(Ts7200 { cpu, devices: bus })
+        Ok(Ts7200 {
+            hle: true,
+            cpu,
+            devices: bus,
+        })
     }
 
-    fn handle_mem_exception(&mut self, e: MemException) -> Result<(), FatalError> {
+    fn handle_mem_exception(cpu: &Cpu, e: MemException) -> Result<(), FatalError> {
         use MemExceptionKind::*;
 
         match e.kind() {
@@ -94,12 +102,12 @@ impl Ts7200 {
             // non-fatal exceptions
             StubRead(_) => warn!(
                 "[pc {:#010x?}] stubed read from {}",
-                self.cpu.reg_get(0, reg::PC),
+                cpu.reg_get(0, reg::PC),
                 e.identifier()
             ),
             StubWrite => warn!(
                 "[pc {:#010x?}] stubed write to  {}",
-                self.cpu.reg_get(0, reg::PC),
+                cpu.reg_get(0, reg::PC),
                 e.identifier()
             ),
         }
@@ -107,48 +115,96 @@ impl Ts7200 {
         Ok(())
     }
 
-    pub fn cycle(&mut self) -> Result<(), FatalError> {
-        let mut adapter = MemoryAdapter::new(&mut self.devices);
+    /// Run the system, returning successfully on" graceful exit".
+    ///
+    /// In HLE mode, a "graceful exit" is when the PC points into the
+    /// bootloader's code.
+    pub fn run(&mut self) -> Result<(), FatalError> {
+        let mut mem = MemoryAdapter::new(&mut self.devices);
 
-        self.cpu.cycle(&mut adapter);
+        loop {
+            if self.hle {
+                let pc = self.cpu.reg_get(0, reg::PC);
+                if pc == HLE_BOOTLOADER_LR {
+                    info!("Successfully returned to bootloader");
+                    return Ok(());
+                }
+            }
 
-        if let Some(e) = adapter.exception.take() {
-            self.handle_mem_exception(e)?;
+            self.cpu.cycle(&mut mem);
+            if let Some(e) = mem.exception.take() {
+                Ts7200::handle_mem_exception(&self.cpu, e)?;
+            }
         }
-
-        Ok(())
-    }
-
-    pub fn debug_cycle(&mut self) -> Result<(), FatalError> {
-        let mut sniffer = crate::memory::util::MemSniffer::new(&mut self.devices);
-        let mut adapter = MemoryAdapter::new(&mut sniffer);
-
-        self.cpu.cycle(&mut adapter);
-
-        let exception = adapter.take_exception();
-        let last_access = sniffer.take_last_access();
-
-        if let Some(e) = exception {
-            self.handle_mem_exception(e)?;
-        }
-
-        // TODO: move debugger code here.
-
-        eprintln!("{}", last_access.unwrap());
-
-        Ok(())
-    }
-
-    pub fn cpu(&self) -> &Cpu {
-        &self.cpu
-    }
-
-    pub fn devices(&self) -> &Ts7200Bus {
-        &self.devices
     }
 
     pub fn devices_mut(&mut self) -> &mut Ts7200Bus {
         &mut self.devices
+    }
+}
+
+use crate::gdbstub::{AccessKind as GdbStubAccessKind, GdbStubTarget, TargetState};
+
+impl GdbStubTarget for Ts7200 {
+    type Usize = u32;
+    type TargetFatalError = FatalError;
+
+    fn step(
+        &mut self,
+        mem_accesses: &mut Vec<(GdbStubAccessKind, u32, u8)>,
+    ) -> Result<TargetState, Self::TargetFatalError> {
+        if self.hle {
+            let pc = self.cpu.reg_get(0, reg::PC);
+            if pc == HLE_BOOTLOADER_LR {
+                info!("Successfully returned to bootloader");
+                return Ok(TargetState::Halted);
+            }
+        }
+
+        // Realistically, most calls to cpu.cycle() will only result on one or two
+        // memory accesses. That said, there are some operations that a emulated CPU
+        // does in one "cycle" that perform quite a few accesses.
+        let mut accesses = [None; 16];
+
+        let mut sniffer = MemSniffer::new(&mut self.devices, &mut accesses);
+        let mut adapter = MemoryAdapter::new(&mut sniffer);
+
+        self.cpu.cycle(&mut adapter);
+
+        if let Some(e) = adapter.take_exception() {
+            Ts7200::handle_mem_exception(&self.cpu, e)?;
+        }
+
+        // translate the resulting `MemAccess`s into gdbstub-compatible accesses
+        for access in accesses.iter().flatten() {
+            let mut push = |offset, val| {
+                mem_accesses.push((
+                    match access.kind {
+                        MemAccessKind::Read => GdbStubAccessKind::Read,
+                        MemAccessKind::Write => GdbStubAccessKind::Write,
+                    },
+                    offset,
+                    val,
+                ))
+            };
+
+            // transform multi-byte accesses into their constituent single-byte accesses
+            match access.val {
+                MemAccessVal::U8(val) => push(access.offset, val),
+                MemAccessVal::U16(val) => val
+                    .to_le_bytes()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| push(access.offset + i as u32, *b)),
+                MemAccessVal::U32(val) => val
+                    .to_le_bytes()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| push(access.offset + i as u32, *b)),
+            }
+        }
+
+        Ok(TargetState::Running)
     }
 }
 
@@ -241,8 +297,8 @@ ts7200_mmap! {
     0x808d_0000..=0x808d_ffff => uart2,
 }
 
-// The CPU's Memory interface expects all memory accesses to "succeed" (i.e:
-// return _some_ sort of value). As such, there needs to be some sort fo shim
+// The CPU's Memory interface expects all memory accesses to succeed (i.e:
+// return _some_ sort of value). As such, there needs to be some sort of shim
 // between the emulator's fallible [Memory] interface and the CPU's infallible
 // [ArmMemory] interface.
 

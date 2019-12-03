@@ -1,19 +1,14 @@
 #![allow(clippy::cast_lossless)]
 
-use std::io::Read;
-
-use log::*;
-
-pub mod debugger;
 pub mod devices;
+pub mod gdbstub;
 pub mod macros;
 pub mod memory;
 pub mod ts7200;
 
-use arm7tdmi_rs::reg;
-use ts7200::{Ts7200, HLE_BOOTLOADER_LR};
+use ts7200::Ts7200;
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
 
     let args: Vec<String> = std::env::args().collect();
@@ -22,6 +17,7 @@ fn main() -> std::io::Result<()> {
     let mut system = Ts7200::new_hle(file)?;
 
     // hook up UARTs to I/O
+    // TODO: add CLI params to hook UARTs up to arbitrary files (e.g: named pipe)
 
     // uart1 is for trains
     // uart2 is for console communication
@@ -34,70 +30,27 @@ fn main() -> std::io::Result<()> {
         .uart2
         .set_writer(Some(Box::new(std::io::stdout())));
 
-    // TODO: implement a gdb stub instead of the current terrible debugger
-    let mut debugger = None;
-    if let Some(objdump_fname) = args.get(2) {
-        let mut dbg = debugger::asm2line::Asm2Line::new();
-        dbg.load_objdump(objdump_fname)?;
-        debugger = Some(dbg)
+    let debugger = match args.get(2) {
+        Some(port) => Some(gdbstub::GdbStub::new(format!("localhost:{}", port))?),
+        None => None,
+    };
+
+    let system_result = match debugger {
+        // hand off control to the debugger
+        // TODO: if the debugging session is closed, the system should keep running.
+        Some(mut debugger) => debugger.run(&mut system).map(|_| ()),
+        // just run the system until it finishes, or an error occurs
+        None => system.run(),
+    };
+
+    if let Err(fatal_error) = system_result {
+        eprintln!("Fatal Error!");
+        eprintln!("============");
+        eprintln!("{:#010x?}", system);
+        eprintln!("{:#010x?}", fatal_error);
+        eprintln!("============");
+        return Err("Fatal Error!".into());
     }
 
-    let mut step_through = true;
-    loop {
-        let pc = system.cpu().reg_get(0, reg::PC);
-
-        if pc == HLE_BOOTLOADER_LR {
-            eprintln!("Successfully returned to bootloader");
-            return Ok(());
-        }
-
-        #[allow(clippy::single_match)]
-        match pc {
-            // 0x0021_9064 => step_through = true,
-            _ => {}
-        }
-
-        // quick-and-dirty step through
-        if step_through {
-            if let Some(ref mut debugger) = debugger {
-                match debugger.lookup(pc) {
-                    Some(info) => debug!("{}", info),
-                    None => debug!("{:#010x?}: ???", pc),
-                }
-            }
-
-            loop {
-                let c = std::io::stdin().bytes().next().unwrap().unwrap();
-                // consume the newline
-                if c as char != '\n' {
-                    std::io::stdin().bytes().next().unwrap().unwrap();
-                }
-
-                match c as char {
-                    'r' => step_through = false,
-                    'c' => {
-                        eprintln!("{:#x?}", system);
-                        continue;
-                    }
-                    _ => {}
-                }
-
-                break;
-            }
-        }
-
-        if let Err(fatal_error) = system.cycle() {
-            eprintln!("Fatal Error!");
-            eprintln!("============");
-            eprintln!("{:#010x?}", system);
-            if let Some(ref mut debugger) = debugger {
-                match debugger.lookup(pc) {
-                    Some(info) => eprintln!("{}", info),
-                    None => eprintln!("{:#010x?}: ???", pc),
-                }
-            }
-            eprintln!("{:#010x?}", fatal_error);
-            panic!();
-        }
-    }
+    Ok(())
 }

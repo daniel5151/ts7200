@@ -2,10 +2,11 @@ use std::ops::{Deref, DerefMut};
 
 use log::info;
 
-use crate::memory::util::MemSniffer;
-use crate::memory::{MemResult, Memory};
+use crate::memory::{MemAccess, MemResult, Memory};
 
-/// A transparent wrapper around memory objects that logs any reads / writes
+/// A transparent wrapper around memory objects that logs any reads / writes.
+///
+/// **This should only be used for debugging**!
 #[derive(Debug)]
 pub struct MemLogger<M: Memory>(M);
 
@@ -33,11 +34,9 @@ impl<T: Memory> DerefMut for MemLogger<T> {
 macro_rules! impl_memlogger_r {
     ($fn:ident, $ret:ty) => {
         fn $fn(&mut self, offset: u32) -> MemResult<$ret> {
-            let ident = self.identifier();
-            let mut snif = MemSniffer::new(&mut self.0);
-            let res = snif.$fn(offset)?;
-            info!("[{}] {}", ident, snif.take_last_access().unwrap());
-            Ok(res)
+            let val = (self.0).$fn(offset)?;
+            info!("[{}] {}", self.identifier(), MemAccess::$fn(offset, val));
+            Ok(val)
         }
     };
 }
@@ -45,10 +44,8 @@ macro_rules! impl_memlogger_r {
 macro_rules! impl_memlogger_w {
     ($fn:ident, $val:ty) => {
         fn $fn(&mut self, offset: u32, val: $val) -> MemResult<()> {
-            let ident = self.identifier();
-            let mut snif = MemSniffer::new(&mut self.0);
-            snif.$fn(offset, val)?;
-            info!("[{}] {}", ident, snif.take_last_access().unwrap());
+            info!("[{}] {}", self.identifier(), MemAccess::$fn(offset, val));
+            (self.0).$fn(offset, val)?;
             Ok(())
         }
     };
