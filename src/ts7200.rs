@@ -143,16 +143,16 @@ impl Ts7200 {
     }
 }
 
-use crate::gdbstub::{AccessKind as GdbStubAccessKind, GdbStubTarget, TargetState};
+use gdbstub::{Access as GdbStubAccess, AccessKind as GdbStubAccessKind, Target, TargetState};
 
-impl GdbStubTarget for Ts7200 {
+impl Target for Ts7200 {
     type Usize = u32;
-    type TargetFatalError = FatalError;
+    type Error = FatalError;
 
     fn step(
         &mut self,
-        mem_accesses: &mut Vec<(GdbStubAccessKind, u32, u8)>,
-    ) -> Result<TargetState, Self::TargetFatalError> {
+        mut log_mem_access: impl FnMut(GdbStubAccess<u32>),
+    ) -> Result<TargetState, Self::Error> {
         if self.hle {
             let pc = self.cpu.reg_get(0, reg::PC);
             if pc == HLE_BOOTLOADER_LR {
@@ -178,14 +178,14 @@ impl GdbStubTarget for Ts7200 {
         // translate the resulting `MemAccess`s into gdbstub-compatible accesses
         for access in accesses.iter().flatten() {
             let mut push = |offset, val| {
-                mem_accesses.push((
-                    match access.kind {
+                log_mem_access(GdbStubAccess {
+                    kind: match access.kind {
                         MemAccessKind::Read => GdbStubAccessKind::Read,
                         MemAccessKind::Write => GdbStubAccessKind::Write,
                     },
-                    offset,
+                    addr: offset,
                     val,
-                ))
+                })
             };
 
             // transform multi-byte accesses into their constituent single-byte accesses

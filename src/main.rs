@@ -1,12 +1,28 @@
 #![allow(clippy::cast_lossless)]
 
 pub mod devices;
-pub mod gdbstub;
 pub mod macros;
 pub mod memory;
 pub mod ts7200;
 
+use std::net::{TcpListener, TcpStream};
+
 use ts7200::Ts7200;
+
+use log::*;
+
+fn new_tcp_gdbstub<T: gdbstub::Target>(
+    port: u16,
+) -> std::io::Result<gdbstub::GdbStub<T, TcpStream>> {
+    let sockaddr = format!("localhost:{}", port);
+    info!("Waiting for a GDB connection on {:?}...", sockaddr);
+
+    let sock = TcpListener::bind(sockaddr)?;
+    let (stream, addr) = sock.accept()?;
+    info!("Debugger connected from {}", addr);
+
+    Ok(gdbstub::GdbStub::new(stream))
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
@@ -31,15 +47,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_writer(Some(Box::new(std::io::stdout())));
 
     let debugger = match args.get(2) {
-        Some(port) => Some(gdbstub::GdbStub::new(format!("localhost:{}", port))?),
+        Some(port) => Some(new_tcp_gdbstub(
+            port.parse().map_err(|_| "invalid gdb port")?,
+        )?),
         None => None,
     };
 
     let system_result = match debugger {
         // hand off control to the debugger
-        // TODO: if the debugging session is closed, the system should keep running.
-        Some(mut debugger) => debugger.run(&mut system).map(|_| ()),
+        Some(mut debugger) => match debugger.run(&mut system) {
+            Ok(_state) => {
+                // TODO: if the debugging session is closed, but the system isn't halted,
+                // execution should continue.
+                Ok(())
+            }
+            Err(gdbstub::Error::TargetError(e)) => Err(e),
+            Err(e) => return Err(e.into()),
+        },
         // just run the system until it finishes, or an error occurs
+        // TODO: spin up GDB session if a interrupt isn't handled
         None => system.run(),
     };
 
