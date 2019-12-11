@@ -56,7 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let system_result = match debugger {
         // hand off control to the debugger
         Some(mut debugger) => match debugger.run(&mut system) {
-            Ok(_state) => {
+            Ok(state) => {
+                eprintln!("Disconnected from GDB. Target state: {:?}", state);
                 // TODO: if the debugging session is closed, but the system isn't halted,
                 // execution should continue.
                 Ok(())

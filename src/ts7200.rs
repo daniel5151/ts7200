@@ -149,6 +149,10 @@ impl Target for Ts7200 {
     type Usize = u32;
     type Error = FatalError;
 
+    fn target_description_xml() -> Option<&'static str> {
+        Some(r#"<target version="1.0"><architecture>armv4t</architecture></target>"#)
+    }
+
     fn step(
         &mut self,
         mut log_mem_access: impl FnMut(GdbStubAccess<u32>),
@@ -205,6 +209,42 @@ impl Target for Ts7200 {
         }
 
         Ok(TargetState::Running)
+    }
+
+    // as specified in binutils-gdb/blob/master/gdb/features/arm/arm-core.xml
+    fn read_registers(&mut self, mut push_reg: impl FnMut(&[u8])) {
+        let bank = self.cpu.get_mode().reg_bank();
+        for i in 0..13 {
+            push_reg(&self.cpu.reg_get(bank, i).to_le_bytes());
+        }
+        push_reg(&self.cpu.reg_get(bank, reg::SP).to_le_bytes()); // 13
+        push_reg(&self.cpu.reg_get(bank, reg::LR).to_le_bytes()); // 14
+        push_reg(&self.cpu.reg_get(bank, reg::PC).to_le_bytes()); // 15
+
+        // Floating point registers, unused
+        for _ in 0..25 {
+            push_reg(&[0, 0, 0, 0]);
+        }
+
+        push_reg(&self.cpu.reg_get(bank, reg::CPSR).to_le_bytes());
+    }
+
+    fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
+        use MemExceptionKind::*;
+
+        for addr in addr {
+            match self.devices.r8(addr) {
+                Ok(val) => push_byte(val),
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    match e.kind() {
+                        Unexpected | Unimplemented | Misaligned => push_byte(0xFE),
+                        // TODO: handle mmio accesses
+                        _ => unimplemented!(),
+                    }
+                }
+            };
+        }
     }
 }
 
