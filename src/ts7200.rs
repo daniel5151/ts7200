@@ -11,7 +11,8 @@ use crate::memory::{
 
 // TODO: improve bootloader initial SP and LR values
 pub const HLE_BOOTLOADER_SP: u32 = 0x0100_0000;
-pub const HLE_BOOTLOADER_LR: u32 = 0x1234_5678;
+// pub const HLE_BOOTLOADER_LR: u32 = 0x1234_5678;
+pub const HLE_BOOTLOADER_LR: u32 = 0;
 
 #[derive(Debug)]
 pub enum FatalError {
@@ -211,7 +212,7 @@ impl Target for Ts7200 {
         Ok(TargetState::Running)
     }
 
-    // as specified in binutils-gdb/blob/master/gdb/features/arm/arm-core.xml
+    // order specified in binutils-gdb/blob/master/gdb/features/arm/arm-core.xml
     fn read_registers(&mut self, mut push_reg: impl FnMut(&[u8])) {
         let bank = self.cpu.get_mode().reg_bank();
         for i in 0..13 {
@@ -229,6 +230,10 @@ impl Target for Ts7200 {
         push_reg(&self.cpu.reg_get(bank, reg::CPSR).to_le_bytes());
     }
 
+    fn read_pc(&mut self) -> u32 {
+        self.cpu.reg_get(self.cpu.get_mode().reg_bank(), reg::PC)
+    }
+
     fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
         use MemExceptionKind::*;
 
@@ -236,13 +241,21 @@ impl Target for Ts7200 {
             match self.devices.r8(addr) {
                 Ok(val) => push_byte(val),
                 Err(e) => {
-                    eprintln!("{:?}", e);
                     match e.kind() {
                         Unexpected | Unimplemented | Misaligned => push_byte(0xFE),
                         // TODO: handle mmio accesses
                         _ => unimplemented!(),
                     }
                 }
+            };
+        }
+    }
+
+    fn write_addrs(&mut self, mut get_addr_val: impl FnMut() -> Option<(u32, u8)>) {
+        while let Some((addr, val)) = get_addr_val() {
+            match self.devices.w8(addr, val) {
+                Ok(_) => {}
+                Err(e) => warn!("gdbstub write_addrs memory exception: {:?}", e),
             };
         }
     }

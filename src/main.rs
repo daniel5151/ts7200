@@ -14,7 +14,7 @@ use log::*;
 fn new_tcp_gdbstub<T: gdbstub::Target>(
     port: u16,
 ) -> std::io::Result<gdbstub::GdbStub<T, TcpStream>> {
-    let sockaddr = format!("localhost:{}", port);
+    let sockaddr = format!("127.0.0.1:{}", port);
     info!("Waiting for a GDB connection on {:?}...", sockaddr);
 
     let sock = TcpListener::bind(sockaddr)?;
