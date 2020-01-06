@@ -1,6 +1,7 @@
 #![allow(clippy::cast_lossless)]
 
 pub mod devices;
+pub mod io;
 pub mod macros;
 pub mod memory;
 pub mod ts7200;
@@ -40,11 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     system
         .devices_mut()
         .uart2
-        .set_reader(Some(Box::new(std::io::stdin())));
-    system
-        .devices_mut()
-        .uart2
-        .set_writer(Some(Box::new(std::io::stdout())));
+        .set_io(Some(Box::new(io::NonBlockingStdin::new())));
 
     let debugger = match args.get(2) {
         Some(port) => Some(new_tcp_gdbstub(

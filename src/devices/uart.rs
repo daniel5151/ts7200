@@ -1,5 +1,4 @@
-use std::io::{Read, Write};
-
+use crate::io::NonBlockingByteIO;
 use crate::memory::{MemResult, MemResultExt, Memory};
 
 /// UART module
@@ -8,8 +7,7 @@ use crate::memory::{MemResult, MemResultExt, Memory};
 /// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
 pub struct Uart {
     label: &'static str,
-    reader: Option<Box<dyn Read>>,
-    writer: Option<Box<dyn Write>>,
+    io: Option<Box<dyn NonBlockingByteIO>>,
 }
 
 impl std::fmt::Debug for Uart {
@@ -21,21 +19,12 @@ impl std::fmt::Debug for Uart {
 impl Uart {
     /// Create a new uart
     pub fn new(label: &'static str) -> Uart {
-        Uart {
-            label,
-            reader: None,
-            writer: None,
-        }
+        Uart { label, io: None }
     }
 
-    /// Set the UART's reader
-    pub fn set_reader(&mut self, reader: Option<Box<dyn Read>>) {
-        self.reader = reader;
-    }
-
-    /// Set the UART's writer
-    pub fn set_writer(&mut self, writer: Option<Box<dyn Write>>) {
-        self.writer = writer;
+    /// Set the UART's io handler
+    pub fn set_io(&mut self, io: Option<Box<dyn NonBlockingByteIO>>) {
+        self.io = io;
     }
 }
 
@@ -51,14 +40,10 @@ impl Memory for Uart {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             // data (8-bit)
-            0x00 => match self.reader {
+            0x00 => match self.io {
                 // XXX: properly implement UART DATA read (i.e: respect flags)
-                Some(ref mut reader) => {
-                    let mut c = [0; 1];
-                    reader.read_exact(&mut c).expect("uart read error");
-                    Ok(c[0] as u32)
-                }
-                // return a dummy value?
+                Some(ref mut io) => Ok(io.read() as u32),
+                // just return a dummy value?
                 None => Ok(0),
             },
             // read status
@@ -74,8 +59,17 @@ impl Memory for Uart {
             // flag
             0x18 => {
                 // XXX: properly implement UART DATA read (i.e: respect flags)
-                // 0x40 => always something to receive
-                Ok(0x40)
+                match self.io {
+                    Some(ref mut io) => {
+                        // 0x40 => something to receive
+                        if io.can_read() {
+                            Ok(0x40)
+                        } else {
+                            Ok(0)
+                        }
+                    }
+                    None => Ok(0),
+                }
             }
             // interrupt identification and clear register
             0x1C => crate::mem_unimpl!("INTR_REG"),
@@ -89,10 +83,10 @@ impl Memory for Uart {
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
         match offset {
             // data (8-bit)
-            0x00 => match self.writer {
+            0x00 => match self.io {
                 // XXX: properly implement UART DATA write (i.e: respect flags)
-                Some(ref mut writer) => {
-                    writer.write_all(&[val as u8]).expect("uart write error");
+                Some(ref mut io) => {
+                    io.write(val as u8);
                     Ok(())
                 }
                 None => Ok(()),
