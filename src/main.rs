@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     system
         .devices_mut()
         .uart2
-        .set_io(Some(Box::new(io::NonBlockingStdin::new())));
+        .set_io(Some(Box::new(io::NonBlockingFileIO::new_stdio())));
 
     let debugger = match args.get(2) {
         Some(port) => Some(new_tcp_gdbstub(
