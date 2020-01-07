@@ -288,9 +288,9 @@ impl Ts7200Bus {
             unmapped: devices::UnmappedMemory,
 
             sdram: devices::Ram::new(32 * 1024 * 1024), // 32 MB
-            timer1: devices::Timer::new("timer1"),
-            timer2: devices::Timer::new("timer2"),
-            timer3: devices::Timer::new("timer3"),
+            timer1: devices::Timer::new("timer1", 16),
+            timer2: devices::Timer::new("timer2", 16),
+            timer3: devices::Timer::new("timer3", 32),
             uart1: devices::Uart::new("uart1"),
             uart2: devices::Uart::new("uart2"),
             vic1: devices::Vic::new("vic1"),
