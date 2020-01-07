@@ -29,6 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
 
     let args: Vec<String> = std::env::args().collect();
+    if args.len() != 2 && args.len() != 4 && args.len() != 5 {
+        panic!("Usage: ts7200 ELF_BINARY <TRAIN_STDIN> <TRAIN_STDOUT> <GDBPORT>");
+    }
 
     let file = std::fs::File::open(args.get(1).expect("must provide .elf to load"))?;
     let mut system = Ts7200::new_hle(file)?;
@@ -37,13 +40,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: add CLI params to hook UARTs up to arbitrary files (e.g: named pipe)
 
     // uart1 is for trains
+    match (args.get(2), args.get(3)) {
+        (Some(in_path), Some(out_path)) => {
+            let check_shortcut = |path| match path {
+                "-" => "/dev/null",
+                _ => path,
+            };
+            let in_path = check_shortcut(in_path);
+            let out_path = check_shortcut(out_path);
+            system
+                .devices_mut()
+                .uart1
+                .set_io(Some(Box::new(io::NonBlockingFileIO::new(
+                    in_path.into(),
+                    out_path.into(),
+                ))))
+        }
+        (_, _) => {}
+    }
+
     // uart2 is for console communication
     system
         .devices_mut()
         .uart2
-        .set_io(Some(Box::new(io::NonBlockingStdin::new())));
+        .set_io(Some(Box::new(io::NonBlockingFileIO::new_stdio())));
 
-    let debugger = match args.get(2) {
+    let debugger = match args.get(5) {
         Some(port) => Some(new_tcp_gdbstub(
             port.parse().map_err(|_| "invalid gdb port")?,
         )?),
