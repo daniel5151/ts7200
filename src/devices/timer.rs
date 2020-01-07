@@ -72,7 +72,6 @@ impl Timer {
 
         // calculate number of ticks the timer should decrement by
         let microticks = dt * khz + self.microticks as u64;
-        // FIXME: rounding down probably ain't the ideal behavior...
         let ticks = (microticks / 1_000_000) as u32;
         self.microticks = (microticks % 1_000_000) as u32;
         let ticks = ticks as u32;
@@ -81,7 +80,6 @@ impl Timer {
             Mode::FreeRunning => {
                 self.val = self.val.wrapping_sub(ticks) & self.wrapmask;
             }
-            // XXX: double check this code...
             Mode::Periodic => {
                 if self.val >= ticks {
                     self.val -= ticks;
