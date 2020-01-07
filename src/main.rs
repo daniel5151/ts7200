@@ -1,4 +1,7 @@
-#![allow(clippy::cast_lossless)]
+#![allow(
+    clippy::cast_lossless,
+    clippy::match_bool // Matching on bools makes things cleaner sometimes
+)]
 
 pub mod devices;
 pub mod io;

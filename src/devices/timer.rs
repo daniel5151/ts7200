@@ -135,7 +135,7 @@ impl Memory for Timer {
                 // this causes the Timer Value register to be updated with an undetermined
                 // value."
                 if self.enabled {
-                    panic!("tried to write to {} Load while the timer is enabled");
+                    panic!("tried to write to {} Load while the timer is enabled", val);
                 }
 
                 let val = val & self.wrapmask;
