@@ -40,7 +40,6 @@ fn spawn_in_channel(source: ReadSource) -> Receiver<u8> {
 }
 
 /// Read input from the file/stdin without blocking the main thread.
-// TODO: Implement the stdio version separately using ncurses?
 pub struct NonBlockingFileIO {
     next: Option<u8>,
     rx: mpsc::Receiver<u8>,
