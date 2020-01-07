@@ -1,3 +1,7 @@
+#![allow(
+    clippy::new_without_default // The new here has side-effects and so shouldn't be defaulted
+)]
+
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -10,7 +14,7 @@ use super::NonBlockingByteIO;
 
 pub struct RawTerminal {
     stdin: AsyncReader,
-    stdout: TermionRawTerminal<Box<dyn Write>>,
+    stdout: TermionRawTerminal<io::Stdout>,
     next: Option<u8>,
 }
 
@@ -20,8 +24,9 @@ impl RawTerminal {
             panic!("stdin/stdout must be tty's");
         }
         let stdin = async_stdin();
-        let stdout: Box<dyn Write> = Box::new(io::stdout());
-        let stdout = stdout.into_raw_mode().expect("failed to enter raw mode");
+        let stdout = io::stdout()
+            .into_raw_mode()
+            .expect("failed to enter raw mode");
         RawTerminal {
             stdin,
             stdout,
@@ -37,7 +42,7 @@ impl NonBlockingByteIO for RawTerminal {
             None => {
                 let mut buf = [0];
                 if self.stdin.read(&mut buf).unwrap() == 1 {
-                    if (buf[0] == 3) {
+                    if buf[0] == 3 {
                         self.stdout.suspend_raw_mode().unwrap();
                         panic!("Ctrl-C sent!");
                     }
