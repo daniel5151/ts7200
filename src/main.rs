@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .uart2
         .set_io(Some(Box::new(io::NonBlockingFileIO::new_stdio())));
 
-    let debugger = match args.get(5) {
+    let debugger = match args.get(4) {
         Some(port) => Some(new_tcp_gdbstub(
             port.parse().map_err(|_| "invalid gdb port")?,
         )?),
