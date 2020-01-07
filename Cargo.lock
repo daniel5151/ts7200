@@ -10,7 +10,7 @@ dependencies = [
 
 [[package]]
 name = "arm7tdmi-rs"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "capstone 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -264,7 +264,7 @@ dependencies = [
 name = "ts7200"
 version = "0.1.0"
 dependencies = [
- "arm7tdmi-rs 0.2.1",
+ "arm7tdmi-rs 0.2.2",
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "gdbstub 0.1.0",
  "goblin 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",

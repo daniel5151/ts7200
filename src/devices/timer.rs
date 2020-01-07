@@ -74,7 +74,6 @@ impl Timer {
         let microticks = dt * khz + self.microticks as u64;
         let ticks = (microticks / 1_000_000) as u32;
         self.microticks = (microticks % 1_000_000) as u32;
-        let ticks = ticks as u32;
 
         match self.mode {
             Mode::FreeRunning => {
