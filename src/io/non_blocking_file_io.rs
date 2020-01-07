@@ -1,6 +1,5 @@
 //! Adapted from https://stackoverflow.com/a/55201400
 
-use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -43,7 +42,7 @@ fn spawn_in_channel(source: ReadSource) -> Receiver<u8> {
 /// Read input from the file/stdin without blocking the main thread.
 // TODO: Implement the stdio version separately using ncurses?
 pub struct NonBlockingFileIO {
-    buf: VecDeque<u8>,
+    next: Option<u8>,
     rx: mpsc::Receiver<u8>,
     write: Box<dyn io::Write>,
 }
@@ -58,7 +57,7 @@ impl NonBlockingFileIO {
                 .expect("failed to open file for writing"),
         );
         NonBlockingFileIO {
-            buf: VecDeque::new(),
+            next: None,
             rx: spawn_in_channel(ReadSource::File(in_path)),
             write,
         }
@@ -67,7 +66,7 @@ impl NonBlockingFileIO {
     pub fn new_stdio() -> Self {
         let write = Box::new(io::stdout());
         NonBlockingFileIO {
-            buf: VecDeque::new(),
+            next: None,
             rx: spawn_in_channel(ReadSource::Stdin),
             write,
         }
@@ -76,25 +75,27 @@ impl NonBlockingFileIO {
 
 impl NonBlockingByteIO for NonBlockingFileIO {
     fn can_read(&mut self) -> bool {
-        if !self.buf.is_empty() {
-            true
-        } else {
-            match self.rx.try_recv() {
+        match self.next {
+            Some(_) => true,
+            None => match self.rx.try_recv() {
                 Ok(c) => {
-                    self.buf.push_back(c);
+                    self.next = Some(c);
                     true
                 }
                 Err(TryRecvError::Empty) => false,
                 Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
-            }
+            },
         }
     }
 
     fn read(&mut self) -> u8 {
         // call `can_read` first, just to fill the buffer if there is data available
         self.can_read();
-        match self.buf.pop_front() {
-            Some(c) => c,
+        match self.next {
+            Some(c) => {
+                self.next = None;
+                c
+            }
             None => 0, // arbitrary value
         }
     }
