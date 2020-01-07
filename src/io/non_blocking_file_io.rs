@@ -60,7 +60,7 @@ impl NonBlockingFileIO {
         NonBlockingFileIO {
             buf: VecDeque::new(),
             rx: spawn_in_channel(ReadSource::File(in_path)),
-            write: write,
+            write,
         }
     }
 
@@ -69,7 +69,7 @@ impl NonBlockingFileIO {
         NonBlockingFileIO {
             buf: VecDeque::new(),
             rx: spawn_in_channel(ReadSource::Stdin),
-            write: write,
+            write,
         }
     }
 }
@@ -77,7 +77,7 @@ impl NonBlockingFileIO {
 impl NonBlockingByteIO for NonBlockingFileIO {
     fn can_read(&mut self) -> bool {
         if !self.buf.is_empty() {
-            return true;
+            true
         } else {
             match self.rx.try_recv() {
                 Ok(c) => {
@@ -100,6 +100,6 @@ impl NonBlockingByteIO for NonBlockingFileIO {
     }
 
     fn write(&mut self, val: u8) {
-        self.write.write(&[val]).expect("io error");
+        self.write.write_all(&[val]).expect("io error");
     }
 }

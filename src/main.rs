@@ -6,7 +6,6 @@ pub mod macros;
 pub mod memory;
 pub mod ts7200;
 
-use std::ffi;
 use std::net::{TcpListener, TcpStream};
 
 use ts7200::Ts7200;
@@ -43,12 +42,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // uart1 is for trains
     match (args.get(2), args.get(3)) {
         (Some(in_path), Some(out_path)) => {
+            let check_shortcut = |path| match path {
+                "-" => "/dev/null",
+                _ => path,
+            };
+            let in_path = check_shortcut(in_path);
+            let out_path = check_shortcut(out_path);
             system
                 .devices_mut()
                 .uart1
                 .set_io(Some(Box::new(io::NonBlockingFileIO::new(
-                    ffi::OsString::from(in_path),
-                    ffi::OsString::from(out_path),
+                    in_path.into(),
+                    out_path.into(),
                 ))))
         }
         (_, _) => {}
