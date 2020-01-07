@@ -80,15 +80,19 @@ impl Timer {
                 self.val = self.val.wrapping_sub(ticks) & self.wrapmask;
             }
             Mode::Periodic => {
-                if self.val >= ticks {
-                    self.val -= ticks;
+                let loadval = match self.loadval {
+                    Some(v) => v,
+                    None => panic!("trying to use unset load value with {}", self.label),
+                };
+                self.val = if loadval == 0 {
+                    0
                 } else {
-                    let loadval = match self.loadval {
-                        Some(v) => v,
-                        None => panic!("trying to use unset load value with {}", self.label),
-                    };
-                    let remaining_ticks = ticks - self.val;
-                    self.val = loadval - remaining_ticks;
+                    if self.val < ticks {
+                        let remaining_ticks = ticks - self.val;
+                        loadval - (remaining_ticks % loadval)
+                    } else {
+                        self.val - ticks
+                    }
                 }
             }
         }

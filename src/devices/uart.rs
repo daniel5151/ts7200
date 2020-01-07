@@ -61,11 +61,12 @@ impl Memory for Uart {
                 // XXX: properly implement UART DATA read (i.e: respect flags)
                 match self.io {
                     Some(ref mut io) => {
-                        // 0x40 => something to receive
                         if io.can_read() {
+                            // 0x40 => something to receive
                             Ok(0x40)
                         } else {
-                            Ok(0)
+                            // 0x10 => Receive fifo empty
+                            Ok(0x10)
                         }
                     }
                     None => Ok(0),
