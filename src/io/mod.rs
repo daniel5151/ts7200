@@ -1,6 +1,8 @@
-mod non_blocking_file_io;
+mod non_blocking_file;
+mod non_blocking_stdio;
 
-pub use non_blocking_file_io::NonBlockingFileIO;
+pub use non_blocking_file::NonBlockingFile;
+pub use non_blocking_stdio::NonBlockingStdio;
 
 /// Incredibly basic trait to read / write bytes
 pub trait NonBlockingByteIO {
