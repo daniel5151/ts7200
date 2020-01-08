@@ -12,7 +12,6 @@ use std::thread;
 
 use super::NonBlockingByteIO;
 
-#[derive(PartialEq, Eq, Clone)]
 enum ReadSource {
     Stdin,
     File(OsString),
@@ -32,20 +31,29 @@ fn spawn_in_channel(source: ReadSource) -> Receiver<u8> {
             }
             ReadSource::File(_) => None,
         };
-        let reader: Box<dyn Read> = match source.clone() {
-            ReadSource::Stdin => Box::new(io::stdin()),
+
+        match &source {
+            ReadSource::Stdin => {
+                for b in io::stdin().bytes() {
+                    let b = b.unwrap();
+                    if b == 3 {
+                        maybe_raw_terminal.unwrap().suspend_raw_mode().unwrap();
+                        eprintln!("Ctrl-C sent!");
+                        std::process::exit(1);
+                    }
+                    tx.send(b).unwrap();
+                }
+            }
             ReadSource::File(path) => {
-                Box::new(fs::File::open(path).expect("failed to open file for reading"))
+                // fast path for files that skips special key handling
+                for b in fs::File::open(path)
+                    .expect("failed to open file for reading")
+                    .bytes()
+                {
+                    let b = b.unwrap();
+                    tx.send(b).unwrap();
+                }
             }
-        };
-        for b in reader.bytes() {
-            let b = b.unwrap();
-            if source == ReadSource::Stdin && b == 3 {
-                maybe_raw_terminal.unwrap().suspend_raw_mode().unwrap();
-                eprintln!("Ctrl-C sent!");
-                std::process::exit(1);
-            }
-            tx.send(b).unwrap();
         }
     });
     rx
