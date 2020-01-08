@@ -19,7 +19,7 @@ impl Ram {
     /// size in bytes
     pub fn new(size: usize) -> Ram {
         Ram {
-            mem: vec![0u8; size],
+            mem: vec![b'-'; size], // non-zero value to make it easier to spot bugs
         }
     }
 

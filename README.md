@@ -10,6 +10,10 @@ The primary purpose of this emulator is to enable rapid prototyping and developm
 
 Instruction timings and hardware access times are _waaay_ off, so any profiling/benchmarking performed in the emulator won't be representative of the real hardware whatsoever.
 
+## Emulator Quirks
+
+- Instead of zeroing-out RAM, uninitialized RAM is set to the ASCII value corresponding to '-' (i.e: 45). This makes it easier to catch uninitialized memory bugs.
+
 ## Status
 
 - Core features
