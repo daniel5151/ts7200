@@ -1,10 +1,8 @@
 //! Adapted from https://stackoverflow.com/a/55201400
 
-use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::io::BufRead;
 use std::io::Read;
 use std::io::Write;
 use std::sync::mpsc;
@@ -22,18 +20,39 @@ enum ReadSource {
 fn spawn_in_channel(source: ReadSource) -> Receiver<u8> {
     let (tx, rx) = mpsc::channel::<u8>();
     thread::spawn(move || {
-        let reader: Box<dyn Read> = match source {
-            ReadSource::Stdin => Box::new(io::stdin()),
-            ReadSource::File(path) => {
-                Box::new(fs::File::open(path).expect("failed to open file for reading"))
+        let maybe_raw_terminal = match source {
+            ReadSource::Stdin => {
+                use termion::raw::IntoRawMode;
+                Some(
+                    io::stdout()
+                        .into_raw_mode()
+                        .expect("failed to enter raw mode"),
+                )
             }
+            ReadSource::File(_) => None,
         };
-        let mut bufreader = io::BufReader::new(reader);
-        loop {
-            let mut buffer = String::new();
-            bufreader.read_line(&mut buffer).unwrap();
-            for &b in buffer.as_bytes() {
-                tx.send(b).unwrap()
+
+        match &source {
+            ReadSource::Stdin => {
+                for b in io::stdin().bytes() {
+                    let b = b.unwrap();
+                    if b == 3 {
+                        maybe_raw_terminal.unwrap().suspend_raw_mode().unwrap();
+                        eprintln!("Ctrl-C sent!");
+                        std::process::exit(1);
+                    }
+                    tx.send(b).unwrap();
+                }
+            }
+            ReadSource::File(path) => {
+                // fast path for files that skips special key handling
+                for b in fs::File::open(path)
+                    .expect("failed to open file for reading")
+                    .bytes()
+                {
+                    let b = b.unwrap();
+                    tx.send(b).unwrap();
+                }
             }
         }
     });
@@ -41,9 +60,8 @@ fn spawn_in_channel(source: ReadSource) -> Receiver<u8> {
 }
 
 /// Read input from the file/stdin without blocking the main thread.
-// TODO: Implement the stdio version separately using ncurses?
 pub struct NonBlockingFileIO {
-    buf: VecDeque<u8>,
+    next: Option<u8>,
     rx: mpsc::Receiver<u8>,
     write: Box<dyn io::Write>,
 }
@@ -58,16 +76,18 @@ impl NonBlockingFileIO {
                 .expect("failed to open file for writing"),
         );
         NonBlockingFileIO {
-            buf: VecDeque::new(),
+            next: None,
             rx: spawn_in_channel(ReadSource::File(in_path)),
             write,
         }
     }
 
     pub fn new_stdio() -> Self {
-        let write = Box::new(io::stdout());
+        use std::os::unix::io::FromRawFd;
+        let stdout = unsafe { fs::File::from_raw_fd(1) };
+        let write: Box<dyn Write> = Box::new(stdout);
         NonBlockingFileIO {
-            buf: VecDeque::new(),
+            next: None,
             rx: spawn_in_channel(ReadSource::Stdin),
             write,
         }
@@ -76,25 +96,27 @@ impl NonBlockingFileIO {
 
 impl NonBlockingByteIO for NonBlockingFileIO {
     fn can_read(&mut self) -> bool {
-        if !self.buf.is_empty() {
-            true
-        } else {
-            match self.rx.try_recv() {
+        match self.next {
+            Some(_) => true,
+            None => match self.rx.try_recv() {
                 Ok(c) => {
-                    self.buf.push_back(c);
+                    self.next = Some(c);
                     true
                 }
                 Err(TryRecvError::Empty) => false,
                 Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
-            }
+            },
         }
     }
 
     fn read(&mut self) -> u8 {
         // call `can_read` first, just to fill the buffer if there is data available
         self.can_read();
-        match self.buf.pop_front() {
-            Some(c) => c,
+        match self.next {
+            Some(c) => {
+                self.next = None;
+                c
+            }
             None => 0, // arbitrary value
         }
     }
