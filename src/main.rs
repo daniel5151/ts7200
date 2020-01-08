@@ -54,10 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             system
                 .devices_mut()
                 .uart1
-                .set_io(Some(Box::new(io::NonBlockingFileIO::new(
-                    in_path.into(),
-                    out_path.into(),
-                ))))
+                .set_io(Some(Box::new(io::NonBlockingFile::new(in_path, out_path)?)))
         }
         (_, _) => {}
     }
@@ -66,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     system
         .devices_mut()
         .uart2
-        .set_io(Some(Box::new(io::NonBlockingFileIO::new_stdio())));
+        .set_io(Some(Box::new(io::NonBlockingStdio::new())));
 
     let debugger = match args.get(4) {
         Some(port) => Some(new_tcp_gdbstub(
