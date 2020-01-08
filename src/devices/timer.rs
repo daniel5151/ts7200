@@ -86,13 +86,11 @@ impl Timer {
                 };
                 self.val = if loadval == 0 {
                     0
+                } else if self.val < ticks {
+                    let remaining_ticks = ticks - self.val;
+                    loadval - (remaining_ticks % loadval)
                 } else {
-                    if self.val < ticks {
-                        let remaining_ticks = ticks - self.val;
-                        loadval - (remaining_ticks % loadval)
-                    } else {
-                        self.val - ticks
-                    }
+                    self.val - ticks
                 }
             }
         }
