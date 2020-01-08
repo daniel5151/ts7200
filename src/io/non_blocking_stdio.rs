@@ -33,8 +33,6 @@ fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
     let (tx, rx) = mpsc::channel::<WriterMsg>();
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
     let handle = thread::spawn(move || {
-        println!("bruh");
-
         let mut stdout = io::stdout()
             .into_raw_mode()
             .expect("could not enter raw mode");
