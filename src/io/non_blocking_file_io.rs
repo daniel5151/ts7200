@@ -3,7 +3,6 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::io::BufRead;
 use std::io::Read;
 use std::io::Write;
 use std::sync::mpsc;
@@ -13,6 +12,7 @@ use std::thread;
 
 use super::NonBlockingByteIO;
 
+#[derive(PartialEq, Eq, Clone)]
 enum ReadSource {
     Stdin,
     File(OsString),
@@ -21,19 +21,31 @@ enum ReadSource {
 fn spawn_in_channel(source: ReadSource) -> Receiver<u8> {
     let (tx, rx) = mpsc::channel::<u8>();
     thread::spawn(move || {
-        let reader: Box<dyn Read> = match source {
+        let maybe_raw_terminal = match source {
+            ReadSource::Stdin => {
+                use termion::raw::IntoRawMode;
+                Some(
+                    io::stdout()
+                        .into_raw_mode()
+                        .expect("failed to enter raw mode"),
+                )
+            }
+            ReadSource::File(_) => None,
+        };
+        let reader: Box<dyn Read> = match source.clone() {
             ReadSource::Stdin => Box::new(io::stdin()),
             ReadSource::File(path) => {
                 Box::new(fs::File::open(path).expect("failed to open file for reading"))
             }
         };
-        let mut bufreader = io::BufReader::new(reader);
-        loop {
-            let mut buffer = String::new();
-            bufreader.read_line(&mut buffer).unwrap();
-            for &b in buffer.as_bytes() {
-                tx.send(b).unwrap()
+        for b in reader.bytes() {
+            let b = b.unwrap();
+            if source == ReadSource::Stdin && b == 3 {
+                maybe_raw_terminal.unwrap().suspend_raw_mode().unwrap();
+                eprintln!("Ctrl-C sent!");
+                std::process::exit(1);
             }
+            tx.send(b).unwrap();
         }
     });
     rx
@@ -63,7 +75,9 @@ impl NonBlockingFileIO {
     }
 
     pub fn new_stdio() -> Self {
-        let write = Box::new(io::stdout());
+        use std::os::unix::io::FromRawFd;
+        let stdout = unsafe { fs::File::from_raw_fd(1) };
+        let write: Box<dyn Write> = Box::new(stdout);
         NonBlockingFileIO {
             next: None,
             rx: spawn_in_channel(ReadSource::Stdin),
