@@ -23,6 +23,11 @@ fn spawn_reader_thread(stdout_tx: Sender<WriterMsg>) -> (JoinHandle<()>, Receive
                 // ctrl-c
                 stdout_tx.send(WriterMsg::Exit).unwrap();
             }
+            // Key code remapping to match gtkterm.
+            let b = match b {
+                127 => 8,
+                _ => b,
+            };
             tx.send(b).unwrap();
         }
     });
