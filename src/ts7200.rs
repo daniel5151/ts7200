@@ -102,12 +102,12 @@ impl Ts7200 {
             }
             // non-fatal exceptions
             StubRead(_) => warn!(
-                "[pc {:#010x?}] stubed read from {}",
+                "[pc {:#010x?}] stubbed read from {}",
                 cpu.reg_get(0, reg::PC),
                 e.identifier()
             ),
             StubWrite => warn!(
-                "[pc {:#010x?}] stubed write to  {}",
+                "[pc {:#010x?}] stubbed write to  {}",
                 cpu.reg_get(0, reg::PC),
                 e.identifier()
             ),
