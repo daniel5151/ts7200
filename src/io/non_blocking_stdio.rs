@@ -21,6 +21,7 @@ fn spawn_reader_thread(stdout_tx: Sender<WriterMsg>) -> (JoinHandle<()>, Receive
             let b = b.unwrap();
             if b == 3 {
                 // ctrl-c
+                eprintln!("Recieved Ctrl-c - terminating now...");
                 stdout_tx.send(WriterMsg::Exit).unwrap();
             }
             // Key code remapping to match gtkterm.
@@ -51,7 +52,6 @@ fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
                     stdout.flush().expect("io error");
                 }
                 WriterMsg::Exit => {
-                    eprintln!("Recieved Ctrl-c - terminating now...");
                     stdout.suspend_raw_mode().unwrap();
                     std::process::exit(1);
                 }
