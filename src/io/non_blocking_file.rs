@@ -3,14 +3,27 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 
 use super::NonBlockingByteIO;
 
 /// Read input from the file/stdin without blocking the main thread.
 pub struct NonBlockingFile {
     next: Option<u8>,
-    in_file: fs::File,
+    in_rx: mpsc::Receiver<u8>,
     out_file: fs::File,
+}
+
+fn spawn_reader_thread(in_file: fs::File) -> Receiver<u8> {
+    let (tx, rx) = mpsc::channel::<u8>();
+    thread::spawn(move || {
+        for b in in_file.bytes() {
+            let b = b.unwrap();
+            tx.send(b).unwrap();
+        }
+    });
+    rx
 }
 
 impl NonBlockingFile {
@@ -21,9 +34,10 @@ impl NonBlockingFile {
         in_path: impl AsRef<Path>,
         out_path: impl AsRef<Path>,
     ) -> io::Result<NonBlockingFile> {
+        let in_file = fs::File::open(in_path)?;
         Ok(NonBlockingFile {
             next: None,
-            in_file: fs::File::open(in_path)?,
+            in_rx: spawn_reader_thread(in_file),
             out_file: fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -36,17 +50,14 @@ impl NonBlockingByteIO for NonBlockingFile {
     fn can_read(&mut self) -> bool {
         match self.next {
             Some(_) => true,
-            None => {
-                let mut c = [0];
-                match self.in_file.read(&mut c).expect("file io error") {
-                    0 => false,
-                    1 => {
-                        self.next = Some(c[0]);
-                        true
-                    }
-                    _ => unreachable!(),
+            None => match self.in_rx.try_recv() {
+                Ok(c) => {
+                    self.next = Some(c);
+                    true
                 }
-            }
+                Err(TryRecvError::Empty) => false,
+                Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
+            },
         }
     }
 
@@ -64,6 +75,5 @@ impl NonBlockingByteIO for NonBlockingFile {
 
     fn write(&mut self, val: u8) {
         self.out_file.write_all(&[val]).expect("io error");
-        self.out_file.flush().expect("io error");
     }
 }
