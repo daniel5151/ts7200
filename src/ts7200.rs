@@ -79,7 +79,7 @@ impl Ts7200 {
         // e.g: SWI correspond to IVT entry 0x08, so to register a SWI handler,
         // write a function pointer to 0x28
         for addr in (0..0x20).step_by(0x04) {
-            bus.sdram.w32(addr, 0xe59f_f020).unwrap();
+            bus.sdram.w32(addr, 0xe59f_f018).unwrap();
         }
 
         // TODO: instantiate various hardware devices to HLE state
