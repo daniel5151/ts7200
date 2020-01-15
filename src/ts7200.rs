@@ -9,10 +9,10 @@ use crate::memory::{
     MemResultExt, Memory,
 };
 
-// TODO: improve bootloader initial SP and LR values
-pub const HLE_BOOTLOADER_SP: u32 = 0x0100_0000;
-// pub const HLE_BOOTLOADER_LR: u32 = 0x1234_5678;
-pub const HLE_BOOTLOADER_LR: u32 = 0;
+// Values grafted from hardware. May vary a couple of bytes here and there, but
+// they're close enough.
+pub const HLE_BOOTLOADER_SP: u32 = 0x01fd_cf34;
+pub const HLE_BOOTLOADER_LR: u32 = 0x0001_74c8;
 
 #[derive(Debug)]
 pub enum FatalError {
@@ -43,6 +43,7 @@ impl Ts7200 {
         })?;
 
         // load directly into the kernel
+        debug!("Setting PC to {:#010x?}", elf_header.entry);
         let cpu = Cpu::new(&[
             (0, reg::PC, elf_header.entry as u32),
             (0, reg::CPSR, 0xd3), // supervisor mode
@@ -128,6 +129,7 @@ impl Ts7200 {
                 let pc = self.cpu.reg_get(0, reg::PC);
                 if pc == HLE_BOOTLOADER_LR {
                     info!("Successfully returned to bootloader");
+                    info!("Return value: {}", self.cpu.reg_get(0, 0));
                     return Ok(());
                 }
             }
