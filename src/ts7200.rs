@@ -164,6 +164,7 @@ impl Target for Ts7200 {
             let pc = self.cpu.reg_get(0, reg::PC);
             if pc == HLE_BOOTLOADER_LR {
                 info!("Successfully returned to bootloader");
+                info!("Return value: {}", self.cpu.reg_get(0, 0));
                 return Ok(TargetState::Halted);
             }
         }

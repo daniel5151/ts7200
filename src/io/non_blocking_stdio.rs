@@ -11,6 +11,7 @@ use super::NonBlockingByteIO;
 #[derive(Clone, Copy)]
 enum WriterMsg {
     Data(u8),
+    CtrlCExit,
     Exit,
 }
 
@@ -22,7 +23,7 @@ fn spawn_reader_thread(stdout_tx: Sender<WriterMsg>) -> (JoinHandle<()>, Receive
             if b == 3 {
                 // ctrl-c
                 eprintln!("Recieved Ctrl-c - terminating now...");
-                stdout_tx.send(WriterMsg::Exit).unwrap();
+                stdout_tx.send(WriterMsg::CtrlCExit).unwrap();
             }
             // Key code remapping to match gtkterm.
             let b = match b {
@@ -51,9 +52,13 @@ fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
                     stdout.write_all(&[b]).expect("io error");
                     stdout.flush().expect("io error");
                 }
-                WriterMsg::Exit => {
+                WriterMsg::CtrlCExit => {
                     stdout.suspend_raw_mode().unwrap();
                     std::process::exit(1);
+                }
+                WriterMsg::Exit => {
+                    stdout.suspend_raw_mode().unwrap();
+                    return;
                 }
             }
         }
@@ -74,6 +79,12 @@ impl Drop for NonBlockingStdio {
     fn drop(&mut self) {
         self.stdout_tx.send(WriterMsg::Exit).unwrap();
         self.writer_thread.take().unwrap().join().unwrap();
+    }
+}
+
+impl Default for NonBlockingStdio {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
