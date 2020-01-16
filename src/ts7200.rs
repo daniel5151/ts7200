@@ -237,17 +237,18 @@ impl Target for Ts7200 {
     }
 
     fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
-        use MemExceptionKind::*;
-
         for addr in addr {
+            // TODO: handle non-ram accesses bette
+            if addr > 0x01ff_ffff {
+                push_byte(0xFE);
+                continue;
+            }
+
             match self.devices.r8(addr) {
                 Ok(val) => push_byte(val),
                 Err(e) => {
-                    match e.kind() {
-                        Unexpected | Unimplemented | Misaligned => push_byte(0xFE),
-                        // TODO: handle mmio accesses
-                        _ => unimplemented!(),
-                    }
+                    warn!("gdbstub read_addrs memory exception: {:?}", e);
+                    panic!("Memory accesses shouldn't throw any errors!")
                 }
             };
         }
