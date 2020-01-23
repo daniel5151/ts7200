@@ -40,25 +40,44 @@ fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
     let (tx, rx) = mpsc::channel::<WriterMsg>();
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
     let handle = thread::spawn(move || {
-        let mut stdout = io::stdout()
-            .into_raw_mode()
-            .expect("could not enter raw mode");
+        let mut stdout = io::stdout();
 
         ready_tx.send(()).unwrap();
 
-        for b in rx {
-            match b {
-                WriterMsg::Data(b) => {
-                    stdout.write_all(&[b]).expect("io error");
-                    stdout.flush().expect("io error");
+        if termion::is_tty(&stdout) {
+            let mut stdout = stdout
+                .into_raw_mode()
+                .expect("could not enter raw mode");
+
+            for b in rx {
+                match b {
+                    WriterMsg::Data(b) => {
+                        stdout.write_all(&[b]).expect("io error");
+                        stdout.flush().expect("io error");
+                    }
+                    WriterMsg::CtrlCExit => {
+                        stdout.suspend_raw_mode().unwrap();
+                        std::process::exit(1);
+                    }
+                    WriterMsg::Exit => {
+                        stdout.suspend_raw_mode().unwrap();
+                        return;
+                    }
                 }
-                WriterMsg::CtrlCExit => {
-                    stdout.suspend_raw_mode().unwrap();
-                    std::process::exit(1);
-                }
-                WriterMsg::Exit => {
-                    stdout.suspend_raw_mode().unwrap();
-                    return;
+            }
+        } else {
+            for b in rx {
+                match b {
+                    WriterMsg::Data(b) => {
+                        stdout.write_all(&[b]).expect("io error");
+                        stdout.flush().expect("io error");
+                    }
+                    WriterMsg::CtrlCExit => {
+                        std::process::exit(1);
+                    }
+                    WriterMsg::Exit => {
+                        return;
+                    }
                 }
             }
         }
