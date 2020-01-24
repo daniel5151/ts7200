@@ -66,7 +66,12 @@ fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
                     }
                     std::process::exit(1);
                 }
-                WriterMsg::Exit => return,
+                WriterMsg::Exit => {
+                    if let Some(handle) = raw_mode_handle {
+                        handle.suspend_raw_mode().unwrap();
+                    }
+                    return;
+                }
             }
         }
     });
