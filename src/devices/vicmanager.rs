@@ -45,6 +45,7 @@ impl Interrupts {
             IntUart3 => 55,
         }
     }
+  
     fn bank(self) -> u8 {
         if self.overall_index() < 32 {
             1
