@@ -1,3 +1,5 @@
+#![allow(clippy::unit_arg)] // Substantially reduces boilerplate
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
@@ -21,7 +23,7 @@ enum Clock {
 }
 
 impl Clock {
-    fn khz(&self) -> u64 {
+    fn khz(self) -> u64 {
         use Clock::*;
         match self {
             Khz2 => 2,
@@ -31,7 +33,7 @@ impl Clock {
 }
 
 enum InterrupterMsg {
-    Enabled(Instant, Duration),
+    Enabled { next: Instant, period: Duration },
     Disabled,
 }
 
@@ -49,7 +51,10 @@ fn spawn_interrupter_thread(
             };
 
             match rx.recv_timeout(timeout) {
-                Ok(InterrupterMsg::Enabled(new_next, new_period)) => {
+                Ok(InterrupterMsg::Enabled {
+                    next: new_next,
+                    period: new_period,
+                }) => {
                     next = Some(new_next);
                     period = new_period;
                 }
@@ -61,23 +66,14 @@ fn spawn_interrupter_thread(
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // Interrupt!
                     assert_interrupt.store(true, Ordering::Relaxed);
-                    next = Some(next.unwrap() + period);
-                    log::warn!("Period: {:?}", period);
+                    next = Some(
+                        next.expect("Impossible: We timed out with an infinite timeout") + period,
+                    );
                 }
             }
         }
     });
     (handle, tx)
-}
-
-fn get_interrupt(index: i32) -> Interrupts {
-    use Interrupts::*;
-    match index {
-        1 => Tc1Ui,
-        2 => Tc2Ui,
-        3 => Tc3Ui,
-        _ => panic!("Invalid timer index {}", index),
-    }
 }
 
 /// Timer module
@@ -111,7 +107,7 @@ impl std::fmt::Debug for Timer {
 
 impl Timer {
     /// Create a new Timer
-    pub fn new(label: &'static str, index: i32, bits: usize) -> Timer {
+    pub fn new(label: &'static str, interrupt: Interrupts, bits: usize) -> Timer {
         let assert_interrupt = Arc::new(AtomicBool::new(false));
         let (_, interrupter_tx) = spawn_interrupter_thread(assert_interrupt.clone());
         Timer {
@@ -125,9 +121,9 @@ impl Timer {
             last_time: Instant::now(),
             microticks: 0,
 
-            interrupt: get_interrupt(index),
+            interrupt,
             interrupter_tx,
-            assert_interrupt: assert_interrupt,
+            assert_interrupt,
             clear_interrupt: false,
         }
     }
@@ -253,12 +249,14 @@ impl Memory for Timer {
                     self.microticks = 0;
 
                     if self.mode == Mode::Periodic {
-                        log::warn!("loadval: {:?} clksel: {:?}", self.loadval, self.clksel);
                         let period = Duration::from_nanos(
                             (self.loadval.unwrap() as u64) * 1_000_000 / self.clksel.khz(),
                         );
                         self.interrupter_tx
-                            .send(InterrupterMsg::Enabled(Instant::now() + period, period))
+                            .send(InterrupterMsg::Enabled {
+                                next: Instant::now() + period,
+                                period,
+                            })
                             .unwrap();
                     }
                 }

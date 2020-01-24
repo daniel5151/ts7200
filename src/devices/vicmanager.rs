@@ -28,7 +28,7 @@ pub enum Interrupts {
 }
 
 impl Interrupts {
-    fn overall_index(&self) -> u8 {
+    fn overall_index(self) -> u8 {
         use Interrupts::*;
         match self {
             Tc1Ui => 4,
@@ -45,7 +45,7 @@ impl Interrupts {
             IntUart3 => 55,
         }
     }
-    fn bank(&self) -> u8 {
+    fn bank(self) -> u8 {
         if self.overall_index() < 32 {
             1
         } else {
@@ -53,7 +53,7 @@ impl Interrupts {
         }
     }
 
-    fn index(&self) -> u8 {
+    fn index(self) -> u8 {
         self.overall_index() & !0x20
     }
 }
