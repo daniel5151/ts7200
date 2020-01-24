@@ -130,7 +130,7 @@ impl Memory for Vic {
                 let result = (if entry.enabled { 0x20 } else { 0 }) + entry.source as u32;
                 Ok(result)
             }
-            0xfe0 => Ok(0x90),
+            0xfe0 => Ok(0x90), // Hardware identification values
             0xfe4 => Ok(0x11),
             0xfe8 => Ok(0x04),
             0xfec => Ok(0x00),
