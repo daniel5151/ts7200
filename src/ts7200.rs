@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use arm7tdmi_rs::{reg, Cpu, Memory as ArmMemory};
+use arm7tdmi_rs::{reg, Cpu, Exception, Memory as ArmMemory};
 use log::*;
 
 use crate::devices;
@@ -117,13 +117,20 @@ impl Ts7200 {
         Ok(())
     }
 
+    fn check_exception(&mut self) {
+        if self.devices.vicmgr.fiq() {
+            self.cpu.exception(Exception::FastInterrupt);
+        };
+        if self.devices.vicmgr.irq() {
+            self.cpu.exception(Exception::Interrupt);
+        };
+    }
+
     /// Run the system, returning successfully on" graceful exit".
     ///
     /// In HLE mode, a "graceful exit" is when the PC points into the
     /// bootloader's code.
     pub fn run(&mut self) -> Result<(), FatalError> {
-        let mut mem = MemoryAdapter::new(&mut self.devices);
-
         loop {
             if self.hle {
                 let pc = self.cpu.reg_get(0, reg::PC);
@@ -134,10 +141,14 @@ impl Ts7200 {
                 }
             }
 
-            self.cpu.cycle(&mut mem);
-            if let Some(e) = mem.exception.take() {
-                Ts7200::handle_mem_exception(&self.cpu, e)?;
+            {
+                let mut mem = MemoryAdapter::new(&mut self.devices);
+                self.cpu.cycle(&mut mem);
+                if let Some(e) = mem.exception.take() {
+                    Ts7200::handle_mem_exception(&self.cpu, e)?;
+                }
             }
+            self.check_exception();
         }
     }
 
@@ -173,15 +184,18 @@ impl Target for Ts7200 {
         // memory accesses. That said, there are some operations that a emulated CPU
         // does in one "cycle" that perform quite a few accesses.
         let mut accesses = [None; 16];
+        {
+            let mut sniffer = MemSniffer::new(&mut self.devices, &mut accesses);
+            let mut adapter = MemoryAdapter::new(&mut sniffer);
 
-        let mut sniffer = MemSniffer::new(&mut self.devices, &mut accesses);
-        let mut adapter = MemoryAdapter::new(&mut sniffer);
+            self.cpu.cycle(&mut adapter);
 
-        self.cpu.cycle(&mut adapter);
-
-        if let Some(e) = adapter.take_exception() {
-            Ts7200::handle_mem_exception(&self.cpu, e)?;
+            if let Some(e) = adapter.take_exception() {
+                Ts7200::handle_mem_exception(&self.cpu, e)?;
+            }
         }
+
+        self.check_exception();
 
         // translate the resulting `MemAccess`s into gdbstub-compatible accesses
         for access in accesses.iter().flatten() {
@@ -281,8 +295,7 @@ pub struct Ts7200Bus {
     pub timer3: devices::Timer,
     pub uart1: devices::Uart,
     pub uart2: devices::Uart,
-    pub vic1: devices::Vic,
-    pub vic2: devices::Vic,
+    pub vicmgr: devices::VicManager,
 }
 
 impl Ts7200Bus {
@@ -297,8 +310,7 @@ impl Ts7200Bus {
             timer3: devices::Timer::new("timer3", 32),
             uart1: devices::Uart::new("uart1"),
             uart2: devices::Uart::new("uart2"),
-            vic1: devices::Vic::new("vic1"),
-            vic2: devices::Vic::new("vic2"),
+            vicmgr: devices::VicManager::new(),
         }
     }
 }
@@ -345,8 +357,7 @@ macro_rules! ts7200_mmap {
 ts7200_mmap! {
     // TODO: fill out more of the memory map
     0x0000_0000..=0x01ff_ffff => sdram,
-    0x800b_0000..=0x800b_ffff => vic1,
-    0x800c_0000..=0x800c_ffff => vic2,
+    0x800b_0000..=0x800c_ffff => vicmgr,
     0x8081_0000..=0x8081_001f => timer1,
     0x8081_0020..=0x8081_003f => timer2,
     0x8081_0080..=0x8081_009f => timer3,
