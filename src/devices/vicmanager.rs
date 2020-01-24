@@ -1,7 +1,3 @@
-#![allow(
-        clippy::new_without_default // Prefer to force explicit creation
-        )]
-
 use crate::memory::{MemResult, Memory};
 
 use super::Vic;
@@ -58,7 +54,7 @@ impl Interrupts {
     }
 
     fn index(&self) -> u8 {
-        return self.overall_index() & !0x20;
+        self.overall_index() & !0x20
     }
 }
 
@@ -69,6 +65,8 @@ pub struct VicManager {
 }
 
 impl VicManager {
+    /// Create a new VicManager
+    #[allow(clippy::new_without_default)] // Prefer to force explicit creation
     pub fn new() -> Self {
         VicManager {
             vic1: Vic::new("vic1"),
@@ -76,10 +74,12 @@ impl VicManager {
         }
     }
 
+    /// Check if an IRQ should be requested
     pub fn fiq(&self) -> bool {
         self.vic1.fiq() || self.vic2.fiq()
     }
 
+    /// Check if an FIQ should be requested
     pub fn irq(&self) -> bool {
         self.vic1.irq() || self.vic2.irq()
     }
@@ -92,20 +92,19 @@ impl VicManager {
         }
     }
 
+    /// Request an interrupt from a hardware source
     pub fn assert_interrupt(&mut self, int: Interrupts) {
         self.bank(int.bank()).assert_interrupt(int.index())
     }
+
+    /// Clear an interrupt from a hardware source
     pub fn clear_interrupt(&mut self, int: Interrupts) {
         self.bank(int.bank()).clear_interrupt(int.index())
     }
 }
 impl Memory for VicManager {
-    fn label(&self) -> Option<&str> {
-        Some("VicManager")
-    }
-
     fn device(&self) -> &'static str {
-        "VIC_MANAGER"
+        "VicManager"
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

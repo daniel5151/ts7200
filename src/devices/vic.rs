@@ -1,6 +1,4 @@
-#![allow(
-    clippy::unit_arg // Substantially reduces boilerplate
-)]
+#![allow(clippy::unit_arg)] // Substantially reduces boilerplate
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
@@ -9,6 +7,7 @@ use crate::memory::{MemResult, MemResultExt, Memory};
 /// As described in section 6
 /// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
 
+#[derive(Debug)]
 struct VectorEntry {
     source: u8,
     isr_addr: u32,
@@ -25,6 +24,7 @@ impl Default for VectorEntry {
     }
 }
 
+#[derive(Debug)]
 pub struct Vic {
     label: &'static str,
     status: u32,          // Interrupts currently hardware asserted
@@ -35,18 +35,6 @@ pub struct Vic {
     default_isr: u32,
 
     vector_entries: [VectorEntry; 16],
-}
-
-impl std::fmt::Debug for Vic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Vic")
-            .field("label", &self.label)
-            .field("status", &self.status)
-            .field("enabled", &self.enabled)
-            .field("select", &self.select)
-            .field("software_status", &self.software_status)
-            .finish()
-    }
 }
 
 impl Vic {
@@ -71,10 +59,12 @@ impl Vic {
         self.rawstatus() & self.enabled
     }
 
+    /// Check if an IRQ should be requested
     pub fn irq(&self) -> bool {
         (self.enabled_active_interrupts() & !self.select) != 0
     }
 
+    /// Check if an FIQ should be requested
     pub fn fiq(&self) -> bool {
         (self.enabled_active_interrupts() & self.select) != 0
     }
@@ -97,10 +87,12 @@ impl Vic {
         }
     }
 
+    /// Request an interrupt from a hardware source
     pub fn assert_interrupt(&mut self, source: u8) {
         self.status |= 1 << source;
     }
 
+    /// Clear an interrupt from a hardware source
     pub fn clear_interrupt(&mut self, source: u8) {
         self.status &= !(1 << source);
     }
@@ -138,6 +130,7 @@ impl Memory for Vic {
                 let result = (if entry.enabled { 0x20 } else { 0 }) + entry.source as u32;
                 Ok(result)
             }
+            // Next 4 values are hardware identification values:
             0xfe0 => Ok(0x90),
             0xfe4 => Ok(0x11),
             0xfe8 => Ok(0x04),
