@@ -11,7 +11,7 @@ use super::Vic;
 /// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
 
 // FIXME for prilik: unclear if this is the best place for this
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Interrupts {
     Tc1Ui,
     Tc2Ui,
@@ -28,7 +28,7 @@ pub enum Interrupts {
 }
 
 impl Interrupts {
-    fn overall_index(&self) -> u8 {
+    fn overall_index(self) -> u8 {
         use Interrupts::*;
         match self {
             Tc1Ui => 4,
@@ -45,7 +45,8 @@ impl Interrupts {
             IntUart3 => 55,
         }
     }
-    fn bank(&self) -> u8 {
+  
+    fn bank(self) -> u8 {
         if self.overall_index() < 32 {
             1
         } else {
@@ -53,7 +54,7 @@ impl Interrupts {
         }
     }
 
-    fn index(&self) -> u8 {
+    fn index(self) -> u8 {
         self.overall_index() & !0x20
     }
 }

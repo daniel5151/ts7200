@@ -118,6 +118,15 @@ impl Ts7200 {
     }
 
     fn check_exception(&mut self) {
+        self.devices
+            .timer1
+            .check_interrupts(&mut self.devices.vicmgr);
+        self.devices
+            .timer2
+            .check_interrupts(&mut self.devices.vicmgr);
+        self.devices
+            .timer3
+            .check_interrupts(&mut self.devices.vicmgr);
         if self.devices.vicmgr.fiq() {
             self.cpu.exception(Exception::FastInterrupt);
         };
@@ -300,14 +309,15 @@ pub struct Ts7200Bus {
 
 impl Ts7200Bus {
     fn new() -> Ts7200Bus {
+        use devices::vicmanager::Interrupts;
         Ts7200Bus {
             mem_exception: None,
             unmapped: devices::UnmappedMemory,
 
             sdram: devices::Ram::new(32 * 1024 * 1024), // 32 MB
-            timer1: devices::Timer::new("timer1", 16),
-            timer2: devices::Timer::new("timer2", 16),
-            timer3: devices::Timer::new("timer3", 32),
+            timer1: devices::Timer::new("timer1", Interrupts::Tc1Ui, 16),
+            timer2: devices::Timer::new("timer2", Interrupts::Tc2Ui, 16),
+            timer3: devices::Timer::new("timer3", Interrupts::Tc3Ui, 32),
             uart1: devices::Uart::new("uart1"),
             uart2: devices::Uart::new("uart2"),
             vicmgr: devices::VicManager::new(),
