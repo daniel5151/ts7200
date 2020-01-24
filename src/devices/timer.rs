@@ -171,6 +171,7 @@ impl Timer {
         }
     }
 
+    /// Check if interrupts should be asserted or cleared
     pub fn check_interrupts(&mut self, vicmgr: &mut VicManager) {
         if self.assert_interrupt.fetch_and(false, Ordering::Relaxed) {
             vicmgr.assert_interrupt(self.interrupt);
