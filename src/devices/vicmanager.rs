@@ -15,7 +15,7 @@ use super::Vic;
 /// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
 
 // FIXME for prilik: unclear if this is the best place for this
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Interrupts {
     Tc1Ui,
     Tc2Ui,

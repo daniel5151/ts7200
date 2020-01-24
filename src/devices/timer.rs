@@ -1,8 +1,14 @@
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
-#[derive(Clone, Copy, Debug)]
+use super::{Interrupts, VicManager};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
     FreeRunning = 0,
     Periodic = 1,
@@ -12,6 +18,66 @@ enum Mode {
 enum Clock {
     Khz2 = 0,
     Khz508 = 1,
+}
+
+impl Clock {
+    fn khz(&self) -> u64 {
+        use Clock::*;
+        match self {
+            Khz2 => 2,
+            Khz508 => 508,
+        }
+    }
+}
+
+enum InterrupterMsg {
+    Enabled(Instant, Duration),
+    Disabled,
+}
+
+fn spawn_interrupter_thread(
+    assert_interrupt: Arc<AtomicBool>,
+) -> (JoinHandle<()>, Sender<InterrupterMsg>) {
+    let (tx, rx) = mpsc::channel::<InterrupterMsg>();
+    let handle = thread::spawn(move || {
+        let mut next = None;
+        let mut period = Default::default();
+        loop {
+            let timeout = match next {
+                Some(next) => next - Instant::now(),
+                None => Duration::from_secs(std::u64::MAX),
+            };
+
+            match rx.recv_timeout(timeout) {
+                Ok(InterrupterMsg::Enabled(new_next, new_period)) => {
+                    next = Some(new_next);
+                    period = new_period;
+                }
+                Ok(InterrupterMsg::Disabled) => next = None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // Sender exited
+                    return;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Interrupt!
+                    assert_interrupt.store(true, Ordering::Relaxed);
+                    next = Some(next.unwrap() + period);
+                    log::warn!("Period: {:?}", period);
+                }
+            }
+        }
+    });
+    (handle, tx)
+}
+
+fn get_interrupt(index: i32) -> Interrupts {
+    use Interrupts::*;
+    match index {
+        1 => Tc1Ui,
+        2 => Tc2Ui,
+        3 => Tc3Ui,
+        _ => panic!("Invalid timer index {}", index),
+    }
 }
 
 /// Timer module
@@ -30,6 +96,11 @@ pub struct Timer {
     wrapmask: u32, // 0x0000FFFF for 16 bit timers, 0xFFFFFFFF for 32 bit timers
     last_time: Instant,
     microticks: u32,
+
+    interrupt: Interrupts,
+    interrupter_tx: mpsc::Sender<InterrupterMsg>,
+    assert_interrupt: Arc<AtomicBool>,
+    clear_interrupt: bool,
 }
 
 impl std::fmt::Debug for Timer {
@@ -40,7 +111,9 @@ impl std::fmt::Debug for Timer {
 
 impl Timer {
     /// Create a new Timer
-    pub fn new(label: &'static str, bits: usize) -> Timer {
+    pub fn new(label: &'static str, index: i32, bits: usize) -> Timer {
+        let assert_interrupt = Arc::new(AtomicBool::new(false));
+        let (_, interrupter_tx) = spawn_interrupter_thread(assert_interrupt.clone());
         Timer {
             label,
             loadval: None,
@@ -51,6 +124,11 @@ impl Timer {
             wrapmask: ((1u64 << bits) - 1) as u32,
             last_time: Instant::now(),
             microticks: 0,
+
+            interrupt: get_interrupt(index),
+            interrupter_tx,
+            assert_interrupt: assert_interrupt,
+            clear_interrupt: false,
         }
     }
 
@@ -65,10 +143,7 @@ impl Timer {
             return;
         }
 
-        let khz = match self.clksel {
-            Clock::Khz2 => 2,
-            Clock::Khz508 => 508,
-        };
+        let khz = self.clksel.khz();
 
         // calculate number of ticks the timer should decrement by
         let microticks = dt * khz + self.microticks as u64;
@@ -93,6 +168,15 @@ impl Timer {
                     self.val - ticks
                 }
             }
+        }
+    }
+
+    pub fn check_interrupts(&mut self, vicmgr: &mut VicManager) {
+        if self.assert_interrupt.fetch_and(false, Ordering::Relaxed) {
+            vicmgr.assert_interrupt(self.interrupt);
+        } else if self.clear_interrupt {
+            self.clear_interrupt = false;
+            vicmgr.clear_interrupt(self.interrupt);
         }
     }
 }
@@ -166,15 +250,25 @@ impl Memory for Timer {
 
                 if self.enabled && !previous_enabled {
                     self.microticks = 0;
+
+                    if self.mode == Mode::Periodic {
+                        log::warn!("loadval: {:?} clksel: {:?}", self.loadval, self.clksel);
+                        let period = Duration::from_nanos(
+                            (self.loadval.unwrap() as u64) * 1_000_000 / self.clksel.khz(),
+                        );
+                        self.interrupter_tx
+                            .send(InterrupterMsg::Enabled(Instant::now() + period, period))
+                            .unwrap();
+                    }
                 }
                 if !self.enabled {
                     self.loadval = None;
+                    self.interrupter_tx.send(InterrupterMsg::Disabled).unwrap();
                 }
 
                 Ok(())
             }
-            // TODO: implement timer interrupts
-            0x0C => crate::mem_unimpl!("CLR_REG"),
+            0x0C => Ok(self.clear_interrupt = true),
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)
