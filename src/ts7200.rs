@@ -127,6 +127,7 @@ impl Ts7200 {
         self.devices
             .timer3
             .check_interrupts(&mut self.devices.vicmgr);
+
         if self.devices.vicmgr.fiq() {
             self.cpu.exception(Exception::FastInterrupt);
         };
@@ -150,13 +151,14 @@ impl Ts7200 {
                 }
             }
 
-            {
-                let mut mem = MemoryAdapter::new(&mut self.devices);
-                self.cpu.cycle(&mut mem);
-                if let Some(e) = mem.exception.take() {
-                    Ts7200::handle_mem_exception(&self.cpu, e)?;
-                }
+            let mut mem = MemoryAdapter::new(&mut self.devices);
+
+            self.cpu.cycle(&mut mem);
+
+            if let Some(e) = mem.exception.take() {
+                Ts7200::handle_mem_exception(&self.cpu, e)?;
             }
+
             self.check_exception();
         }
     }
@@ -193,15 +195,13 @@ impl Target for Ts7200 {
         // memory accesses. That said, there are some operations that a emulated CPU
         // does in one "cycle" that perform quite a few accesses.
         let mut accesses = [None; 16];
-        {
-            let mut sniffer = MemSniffer::new(&mut self.devices, &mut accesses);
-            let mut adapter = MemoryAdapter::new(&mut sniffer);
+        let mut sniffer = MemSniffer::new(&mut self.devices, &mut accesses);
+        let mut adapter = MemoryAdapter::new(&mut sniffer);
 
-            self.cpu.cycle(&mut adapter);
+        self.cpu.cycle(&mut adapter);
 
-            if let Some(e) = adapter.take_exception() {
-                Ts7200::handle_mem_exception(&self.cpu, e)?;
-            }
+        if let Some(e) = adapter.take_exception() {
+            Ts7200::handle_mem_exception(&self.cpu, e)?;
         }
 
         self.check_exception();
@@ -304,23 +304,23 @@ pub struct Ts7200Bus {
     pub timer3: devices::Timer,
     pub uart1: devices::Uart,
     pub uart2: devices::Uart,
-    pub vicmgr: devices::VicManager,
+    pub vicmgr: devices::vic::VicManager,
 }
 
 impl Ts7200Bus {
     fn new() -> Ts7200Bus {
-        use devices::vicmanager::Interrupts;
+        use devices::vic::Interrupt;
         Ts7200Bus {
             mem_exception: None,
             unmapped: devices::UnmappedMemory,
 
             sdram: devices::Ram::new(32 * 1024 * 1024), // 32 MB
-            timer1: devices::Timer::new("timer1", Interrupts::Tc1Ui, 16),
-            timer2: devices::Timer::new("timer2", Interrupts::Tc2Ui, 16),
-            timer3: devices::Timer::new("timer3", Interrupts::Tc3Ui, 32),
+            timer1: devices::Timer::new("timer1", Interrupt::Tc1Ui, 16),
+            timer2: devices::Timer::new("timer2", Interrupt::Tc2Ui, 16),
+            timer3: devices::Timer::new("timer3", Interrupt::Tc3Ui, 32),
             uart1: devices::Uart::new("uart1"),
             uart2: devices::Uart::new("uart2"),
-            vicmgr: devices::VicManager::new(),
+            vicmgr: devices::vic::VicManager::new(),
         }
     }
 }

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
-use super::{Interrupts, VicManager};
+use super::vic::{Interrupt, VicManager};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
@@ -78,8 +78,7 @@ fn spawn_interrupter_thread(
 
 /// Timer module
 ///
-/// As described in section 18
-/// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
+/// As described in section 18 of the EP93xx User's Guide
 pub struct Timer {
     label: &'static str,
     // registers
@@ -93,7 +92,7 @@ pub struct Timer {
     last_time: Instant,
     microticks: u32,
 
-    interrupt: Interrupts,
+    interrupt: Interrupt,
     interrupter_tx: mpsc::Sender<InterrupterMsg>,
     assert_interrupt: Arc<AtomicBool>,
     clear_interrupt: bool,
@@ -107,7 +106,7 @@ impl std::fmt::Debug for Timer {
 
 impl Timer {
     /// Create a new Timer
-    pub fn new(label: &'static str, interrupt: Interrupts, bits: usize) -> Timer {
+    pub fn new(label: &'static str, interrupt: Interrupt, bits: usize) -> Timer {
         let assert_interrupt = Arc::new(AtomicBool::new(false));
         let (_, interrupter_tx) = spawn_interrupter_thread(assert_interrupt.clone());
         Timer {

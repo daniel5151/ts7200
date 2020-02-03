@@ -2,14 +2,10 @@ pub mod ram;
 pub mod timer;
 pub mod uart;
 pub mod vic;
-pub mod vicmanager;
 
 pub use ram::Ram;
 pub use timer::Timer;
 pub use uart::Uart;
-pub use vic::Vic;
-pub use vicmanager::Interrupts;
-pub use vicmanager::VicManager;
 
 use crate::memory::{MemResult, Memory};
 
