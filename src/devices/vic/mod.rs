@@ -1,29 +1,23 @@
 #![allow(clippy::unit_arg)] // Substantially reduces boilerplate
 
+pub mod interrupts;
+pub mod vicmanager;
+
+pub use interrupts::Interrupt;
+pub use vicmanager::VicManager;
+
 use crate::memory::{MemResult, MemResultExt, Memory};
 
-/// VIC module
-///
-/// As described in section 6
-/// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct VectorEntry {
     source: u8,
     isr_addr: u32,
     enabled: bool,
 }
 
-impl Default for VectorEntry {
-    fn default() -> Self {
-        VectorEntry {
-            source: 0,
-            isr_addr: 0,
-            enabled: false,
-        }
-    }
-}
-
+/// VIC module
+///
+/// As described in section 6 of the EP93xx User's Guide
 #[derive(Debug)]
 pub struct Vic {
     label: &'static str,

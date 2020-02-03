@@ -3,8 +3,7 @@ use crate::memory::{MemResult, MemResultExt, Memory};
 
 /// UART module
 ///
-/// As described in section 14
-/// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
+/// As described in section 14 of the EP93xx User's Guide
 pub struct Uart {
     label: &'static str,
     io: Option<Box<dyn NonBlockingByteIO>>,

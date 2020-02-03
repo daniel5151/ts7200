@@ -304,23 +304,23 @@ pub struct Ts7200Bus {
     pub timer3: devices::Timer,
     pub uart1: devices::Uart,
     pub uart2: devices::Uart,
-    pub vicmgr: devices::VicManager,
+    pub vicmgr: devices::vic::VicManager,
 }
 
 impl Ts7200Bus {
     fn new() -> Ts7200Bus {
-        use devices::vicmanager::Interrupts;
+        use devices::vic::Interrupt;
         Ts7200Bus {
             mem_exception: None,
             unmapped: devices::UnmappedMemory,
 
             sdram: devices::Ram::new(32 * 1024 * 1024), // 32 MB
-            timer1: devices::Timer::new("timer1", Interrupts::Tc1Ui, 16),
-            timer2: devices::Timer::new("timer2", Interrupts::Tc2Ui, 16),
-            timer3: devices::Timer::new("timer3", Interrupts::Tc3Ui, 32),
+            timer1: devices::Timer::new("timer1", Interrupt::Tc1Ui, 16),
+            timer2: devices::Timer::new("timer2", Interrupt::Tc2Ui, 16),
+            timer3: devices::Timer::new("timer3", Interrupt::Tc3Ui, 32),
             uart1: devices::Uart::new("uart1"),
             uart2: devices::Uart::new("uart2"),
-            vicmgr: devices::VicManager::new(),
+            vicmgr: devices::vic::VicManager::new(),
         }
     }
 }

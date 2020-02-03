@@ -1,64 +1,11 @@
 use crate::memory::{MemResult, Memory};
 
-use super::Vic;
+use super::{Interrupt, Vic};
 
-/// VIC Manager module
+/// VIC Manager module.
 ///
-/// Contains the two VIC units from the EP9302 and handles the daisy chaining
-/// logic.
-///
-/// As described in section 6
-/// https://www.student.cs.uwaterloo.ca/~cs452/F19/docs/ep93xx-user-guide.pdf
-
-// FIXME for prilik: unclear if this is the best place for this
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Interrupts {
-    Tc1Ui,
-    Tc2Ui,
-    Uart1RxIntr1,
-    Uart1TxIntr1,
-    Uart2RxIntr2,
-    Uart2TxIntr2,
-    Uart3RxIntr3,
-    Uart3TxIntr3,
-    Tc3Ui,
-    IntUart1,
-    IntUart2,
-    IntUart3,
-}
-
-impl Interrupts {
-    fn overall_index(self) -> u8 {
-        use Interrupts::*;
-        match self {
-            Tc1Ui => 4,
-            Tc2Ui => 5,
-            Uart1RxIntr1 => 23,
-            Uart1TxIntr1 => 24,
-            Uart2RxIntr2 => 25,
-            Uart2TxIntr2 => 26,
-            Uart3RxIntr3 => 27,
-            Uart3TxIntr3 => 28,
-            Tc3Ui => 51,
-            IntUart1 => 52,
-            IntUart2 => 54,
-            IntUart3 => 55,
-        }
-    }
-  
-    fn bank(self) -> u8 {
-        if self.overall_index() < 32 {
-            1
-        } else {
-            2
-        }
-    }
-
-    fn index(self) -> u8 {
-        self.overall_index() & !0x20
-    }
-}
-
+/// Contains the two VIC units from the EP9302, and handles the daisy chaining
+/// logic (As described in section 6.1 of the EP93xx user's guide)
 #[derive(Debug)]
 pub struct VicManager {
     vic1: Vic,
@@ -94,12 +41,12 @@ impl VicManager {
     }
 
     /// Request an interrupt from a hardware source
-    pub fn assert_interrupt(&mut self, int: Interrupts) {
+    pub fn assert_interrupt(&mut self, int: Interrupt) {
         self.bank(int.bank()).assert_interrupt(int.index())
     }
 
     /// Clear an interrupt from a hardware source
-    pub fn clear_interrupt(&mut self, int: Interrupts) {
+    pub fn clear_interrupt(&mut self, int: Interrupt) {
         self.bank(int.bank()).clear_interrupt(int.index())
     }
 }
