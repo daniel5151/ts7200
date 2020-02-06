@@ -191,23 +191,8 @@ impl Target for Ts7200 {
             }
         }
 
-        // Realistically, most calls to cpu.cycle() will only result on one or two
-        // memory accesses. That said, there are some operations that a emulated CPU
-        // does in one "cycle" that perform quite a few accesses.
-        let mut accesses = [None; 16];
-        let mut sniffer = MemSniffer::new(&mut self.devices, &mut accesses);
-        let mut adapter = MemoryAdapter::new(&mut sniffer);
-
-        self.cpu.cycle(&mut adapter);
-
-        if let Some(e) = adapter.take_exception() {
-            Ts7200::handle_mem_exception(&self.cpu, e)?;
-        }
-
-        self.check_exception();
-
-        // translate the resulting `MemAccess`s into gdbstub-compatible accesses
-        for access in accesses.iter().flatten() {
+        let mut sniffer = MemSniffer::new(&mut self.devices, |access| {
+            // translate the resulting `MemAccess`s into gdbstub-compatible accesses
             let mut push = |offset, val| {
                 log_mem_access(GdbStubAccess {
                     kind: match access.kind {
@@ -233,7 +218,17 @@ impl Target for Ts7200 {
                     .enumerate()
                     .for_each(|(i, b)| push(access.offset + i as u32, *b)),
             }
+        });
+
+        let mut adapter = MemoryAdapter::new(&mut sniffer);
+
+        self.cpu.cycle(&mut adapter);
+
+        if let Some(e) = adapter.take_exception() {
+            Ts7200::handle_mem_exception(&self.cpu, e)?;
         }
+
+        self.check_exception();
 
         Ok(TargetState::Running)
     }

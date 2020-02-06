@@ -5,19 +5,14 @@ use crate::memory::{MemAccess, MemResult, Memory};
 ///
 /// Panics if the provided buffer overflows.
 #[derive(Debug)]
-pub struct MemSniffer<'a, M: Memory> {
+pub struct MemSniffer<'a, M: Memory, F: FnMut(MemAccess)> {
     mem: &'a mut M,
-    accesses: &'a mut [Option<MemAccess>],
-    i: usize,
+    on_access: F,
 }
 
-impl<'a, M: Memory> MemSniffer<'a, M> {
-    pub fn new(mem: &'a mut M, accesses: &'a mut [Option<MemAccess>]) -> MemSniffer<'a, M> {
-        MemSniffer {
-            mem,
-            accesses,
-            i: 0,
-        }
+impl<'a, M: Memory, F: FnMut(MemAccess)> MemSniffer<'a, M, F> {
+    pub fn new(mem: &'a mut M, on_access: F) -> MemSniffer<'a, M, F> {
+        MemSniffer { mem, on_access }
     }
 }
 
@@ -25,8 +20,7 @@ macro_rules! impl_memsniff_r {
     ($fn:ident, $ret:ty) => {
         fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
             let ret = self.mem.$fn(addr)?;
-            self.accesses[self.i] = Some(MemAccess::$fn(addr, ret));
-            self.i += 1;
+            (self.on_access)(MemAccess::$fn(addr, ret));
             Ok(ret)
         }
     };
@@ -36,14 +30,13 @@ macro_rules! impl_memsniff_w {
     ($fn:ident, $val:ty) => {
         fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
             self.mem.$fn(addr, val)?;
-            self.accesses[self.i] = Some(MemAccess::$fn(addr, val));
-            self.i += 1;
+            (self.on_access)(MemAccess::$fn(addr, val));
             Ok(())
         }
     };
 }
 
-impl<'a, M: Memory> Memory for MemSniffer<'a, M> {
+impl<'a, M: Memory, F: FnMut(MemAccess)> Memory for MemSniffer<'a, M, F> {
     fn device(&self) -> &'static str {
         self.mem.device()
     }
