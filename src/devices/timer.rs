@@ -42,11 +42,11 @@ fn spawn_interrupter_thread(
 ) -> (JoinHandle<()>, Sender<InterrupterMsg>) {
     let (tx, rx) = mpsc::channel::<InterrupterMsg>();
     let handle = thread::spawn(move || {
-        let mut next = None;
+        let mut next: Option<Instant> = None;
         let mut period = Default::default();
         loop {
             let timeout = match next {
-                Some(next) => next - Instant::now(),
+                Some(next) => next.saturating_duration_since(Instant::now()),
                 None => Duration::from_secs(std::u64::MAX),
             };
 
