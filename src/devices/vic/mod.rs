@@ -1,5 +1,3 @@
-#![allow(clippy::unit_arg)] // Substantially reduces boilerplate
-
 pub mod interrupts;
 pub mod vicmanager;
 
@@ -111,6 +109,7 @@ impl Memory for Vic {
             0x14 => crate::mem_unexpected!(),
             0x18 => Ok(self.software_status),
             0x1c => Ok(0),
+            // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
             0x20 => crate::mem_stub!("PROTECTION", 0),
             0x30 => Ok(self.isr_address()),
             0x34 => Ok(self.default_isr),
@@ -141,6 +140,7 @@ impl Memory for Vic {
             0x14 => Ok(self.enabled &= !val),
             0x18 => Ok(self.software_status |= val),
             0x1c => Ok(self.software_status &= !val),
+            // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
             0x20 => crate::mem_stub!("PROTECTION"),
             0x30 => crate::mem_stub!("VECTADDR"),
             0x34 => Ok(self.default_isr = val),

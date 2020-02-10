@@ -1,5 +1,3 @@
-#![allow(clippy::unit_arg)] // Substantially reduces boilerplate
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
