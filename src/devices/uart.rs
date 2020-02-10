@@ -17,7 +17,7 @@ impl std::fmt::Debug for Uart {
 
 impl Uart {
     /// Create a new uart
-    pub fn new(label: &'static str) -> Uart {
+    pub fn new_hle(label: &'static str) -> Uart {
         Uart { label, io: None }
     }
 

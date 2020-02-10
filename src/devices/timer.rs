@@ -152,6 +152,7 @@ impl Timer {
             Mode::Periodic => {
                 let loadval = match self.loadval {
                     Some(v) => v,
+                    // FIXME: emit warning when device contract is violated (instead of panic)
                     None => panic!("trying to use unset load value with {}", self.label),
                 };
                 self.val = if loadval == 0 {
@@ -192,6 +193,7 @@ impl Memory for Timer {
         match offset {
             0x00 => Ok(match self.loadval {
                 Some(v) => v,
+                // FIXME: emit warning when device contract is violated (instead of panic)
                 None => panic!("tried to read {} Load before it's been set it", self.label),
             }),
             0x04 => Ok(self.val),
@@ -217,6 +219,7 @@ impl Memory for Timer {
                 // this causes the Timer Value register to be updated with an undetermined
                 // value."
                 if self.enabled {
+                    // FIXME: emit warning when device contract is violated (instead of panic)
                     panic!("tried to write to {} Load while the timer is enabled", val);
                 }
 
@@ -228,9 +231,8 @@ impl Memory for Timer {
                 Ok(())
             }
             0x04 => {
-                // TODO: add warning about writing to registers that _shouldn't_ be written to,
-                // instead of this hard panic
-                panic!("tried to write value to Write-only Timer register");
+                // XXX: don't panic if writing to a read-only register
+                panic!("tried to write value to read-only Timer register");
             }
             0x08 => {
                 self.clksel = match val & (1 << 3) != 0 {

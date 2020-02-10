@@ -54,7 +54,7 @@ impl Ts7200 {
         ]);
 
         // Init system devices
-        let mut bus = Ts7200Bus::new();
+        let mut bus = Ts7200Bus::new_hle();
 
         // copy all in-memory sections from the ELF file into system RAM
         let sections = elf_header
@@ -290,10 +290,8 @@ impl Target for Ts7200 {
 /// devices.
 #[derive(Debug)]
 pub struct Ts7200Bus {
-    mem_exception: Option<MemException>,
-    unmapped: devices::UnmappedMemory,
-
     pub sdram: devices::Ram, // 32 MB
+    pub syscon: devices::Syscon,
     pub timer1: devices::Timer,
     pub timer2: devices::Timer,
     pub timer3: devices::Timer,
@@ -303,19 +301,17 @@ pub struct Ts7200Bus {
 }
 
 impl Ts7200Bus {
-    fn new() -> Ts7200Bus {
-        use devices::vic::Interrupt;
+    fn new_hle() -> Ts7200Bus {
+        use devices::{vic::Interrupt, *};
         Ts7200Bus {
-            mem_exception: None,
-            unmapped: devices::UnmappedMemory,
-
-            sdram: devices::Ram::new(32 * 1024 * 1024), // 32 MB
-            timer1: devices::Timer::new("timer1", Interrupt::Tc1Ui, 16),
-            timer2: devices::Timer::new("timer2", Interrupt::Tc2Ui, 16),
-            timer3: devices::Timer::new("timer3", Interrupt::Tc3Ui, 32),
-            uart1: devices::Uart::new("uart1"),
-            uart2: devices::Uart::new("uart2"),
-            vicmgr: devices::vic::VicManager::new(),
+            sdram: Ram::new(32 * 1024 * 1024), // 32 MB
+            syscon: Syscon::new_hle(),
+            timer1: Timer::new("timer1", Interrupt::Tc1Ui, 16),
+            timer2: Timer::new("timer2", Interrupt::Tc2Ui, 16),
+            timer3: Timer::new("timer3", Interrupt::Tc3Ui, 32),
+            uart1: Uart::new_hle("uart1"),
+            uart2: Uart::new_hle("uart2"),
+            vicmgr: vic::VicManager::new(),
         }
     }
 }
@@ -327,7 +323,7 @@ macro_rules! ts7200_mmap {
                 fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
                     match addr {
                         $($start..=$end => self.$device.$fn(addr - $start).mem_ctx($start, self),)*
-                        _ => self.unmapped.$fn(addr - 0).mem_ctx(0, self),
+                        _ => devices::UnmappedMemory.$fn(addr - 0).mem_ctx(0, self),
                     }
                 }
             };
@@ -338,7 +334,7 @@ macro_rules! ts7200_mmap {
                 fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
                     match addr {
                         $($start..=$end => self.$device.$fn(addr - $start, val).mem_ctx($start, self),)*
-                        _ => self.unmapped.$fn(addr - 0, val).mem_ctx(0, self),
+                        _ => devices::UnmappedMemory.$fn(addr - 0, val).mem_ctx(0, self),
                     }
                 }
             };
@@ -368,6 +364,7 @@ ts7200_mmap! {
     0x8081_0080..=0x8081_009f => timer3,
     0x808c_0000..=0x808c_ffff => uart1,
     0x808d_0000..=0x808d_ffff => uart2,
+    0x8093_0000..=0x8093_ffff => syscon,
 }
 
 // The CPU's Memory interface expects all memory accesses to succeed (i.e:
