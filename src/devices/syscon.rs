@@ -1,6 +1,12 @@
-use log::*;
-
 use crate::memory::{MemResult, MemResultExt, Memory};
+
+/// EP9302 Power States (see page 5-10)
+#[derive(Debug, Clone, Copy)]
+pub enum PowerState {
+    Run,
+    Halt,
+    Standby,
+}
 
 /// System Controller module
 ///
@@ -10,6 +16,7 @@ pub struct Syscon {
     scratch_reg: [u32; 2],
     device_cfg: u32,
     is_locked: bool,
+    power_state: PowerState,
 }
 
 impl Syscon {
@@ -20,7 +27,18 @@ impl Syscon {
             // Enabled Bits: GonK CPENA U2EN U1EN HonIDE GonIDE EonIDE
             device_cfg: 0x0894_0d00, // hardware validated
             is_locked: true,
+            power_state: PowerState::Run,
         }
+    }
+
+    /// Query the current [`PowerState`] of the system.
+    pub fn power_state(&self) -> PowerState {
+        self.power_state
+    }
+
+    /// Set the [`PowerState`] of the system back to Run.
+    pub fn set_run_mode(&mut self) {
+        self.power_state = PowerState::Run
     }
 }
 
@@ -63,8 +81,7 @@ impl Memory for Syscon {
             0x04 => crate::mem_unimpl!("PwrCnt"),
             0x08 => {
                 if self.device_cfg & 1 == 1 {
-                    // TODO: actually enter "halt" mode somehow
-                    warn!("Entered Halt mode");
+                    self.power_state = PowerState::Halt;
                     Ok(0) // doesn't matter
                 } else {
                     // FIXME: emit warning when device contract is violated (instead of panic)
@@ -73,8 +90,7 @@ impl Memory for Syscon {
             }
             0x0C => {
                 if self.device_cfg & 1 == 1 {
-                    // TODO: actually enter "low power mode" somehow
-                    warn!("Entered Standby mode");
+                    self.power_state = PowerState::Standby;
                     Ok(0) // doesn't matter
                 } else {
                     // FIXME: emit warning when device contract is violated (instead of panic)

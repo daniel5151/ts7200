@@ -85,7 +85,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => return Err(e.into()),
         },
         // just run the system until it finishes, or an error occurs
-        // TODO: spin up GDB session if a interrupt isn't handled
         None => system.run(),
     };
 

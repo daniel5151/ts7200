@@ -5,8 +5,8 @@ use log::*;
 
 use crate::devices;
 use crate::memory::{
-    util::MemSniffer, MemAccessKind, MemAccessVal, MemException, MemExceptionKind, MemResult,
-    MemResultExt, Memory,
+    util::MemSniffer, MemAccess, MemAccessKind, MemAccessVal, MemException, MemExceptionKind,
+    MemResult, MemResultExt, Memory,
 };
 
 // Values grafted from hardware. May vary a couple of bytes here and there, but
@@ -136,7 +136,7 @@ impl Ts7200 {
         };
     }
 
-    /// Run the system, returning successfully on" graceful exit".
+    /// Run the system, returning successfully on "graceful exit".
     ///
     /// In HLE mode, a "graceful exit" is when the PC points into the
     /// bootloader's code.
@@ -151,15 +151,25 @@ impl Ts7200 {
                 }
             }
 
-            let mut mem = MemoryAdapter::new(&mut self.devices);
-
-            self.cpu.cycle(&mut mem);
-
-            if let Some(e) = mem.exception.take() {
-                Ts7200::handle_mem_exception(&self.cpu, e)?;
-            }
-
-            self.check_exception();
+            use crate::devices::syscon::PowerState;
+            match self.devices.syscon.power_state() {
+                PowerState::Run => {
+                    let mut mem = MemoryAdapter::new(&mut self.devices);
+                    self.cpu.cycle(&mut mem);
+                    if let Some(e) = mem.take_exception() {
+                        Ts7200::handle_mem_exception(&self.cpu, e)?;
+                    }
+                    self.check_exception();
+                }
+                // XXX: find less wasteful way to halt CPU
+                PowerState::Halt => {
+                    self.check_exception();
+                    if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
+                        self.devices.syscon.set_run_mode();
+                    };
+                }
+                PowerState::Standby => unimplemented!(),
+            };
         }
     }
 
@@ -191,8 +201,7 @@ impl Target for Ts7200 {
             }
         }
 
-        let mut sniffer = MemSniffer::new(&mut self.devices, |access| {
-            // translate the resulting `MemAccess`s into gdbstub-compatible accesses
+        let log_access_to_gdb = |access: MemAccess| {
             let mut push = |offset, val| {
                 log_mem_access(GdbStubAccess {
                     kind: match access.kind {
@@ -218,17 +227,28 @@ impl Target for Ts7200 {
                     .enumerate()
                     .for_each(|(i, b)| push(access.offset + i as u32, *b)),
             }
-        });
+        };
 
-        let mut adapter = MemoryAdapter::new(&mut sniffer);
-
-        self.cpu.cycle(&mut adapter);
-
-        if let Some(e) = adapter.take_exception() {
-            Ts7200::handle_mem_exception(&self.cpu, e)?;
-        }
-
-        self.check_exception();
+        use crate::devices::syscon::PowerState;
+        match self.devices.syscon.power_state() {
+            PowerState::Run => {
+                let mut sniffer = MemSniffer::new(&mut self.devices, log_access_to_gdb);
+                let mut mem = MemoryAdapter::new(&mut sniffer);
+                self.cpu.cycle(&mut mem);
+                if let Some(e) = mem.take_exception() {
+                    Ts7200::handle_mem_exception(&self.cpu, e)?;
+                }
+                self.check_exception();
+            }
+            // XXX: find less wasteful way to halt CPU
+            PowerState::Halt => {
+                self.check_exception();
+                if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
+                    self.devices.syscon.set_run_mode();
+                };
+            }
+            PowerState::Standby => unimplemented!(),
+        };
 
         Ok(TargetState::Running)
     }
@@ -257,7 +277,7 @@ impl Target for Ts7200 {
 
     fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
         for addr in addr {
-            // TODO: handle non-ram accesses bette
+            // TODO: handle non-ram accesses better
             if addr > 0x01ff_ffff {
                 push_byte(0xFE);
                 continue;
@@ -267,7 +287,8 @@ impl Target for Ts7200 {
                 Ok(val) => push_byte(val),
                 Err(e) => {
                     warn!("gdbstub read_addrs memory exception: {:?}", e);
-                    panic!("Memory accesses shouldn't throw any errors!")
+                    // non-ram accesses are currently masked out.
+                    unreachable!("Memory accesses shouldn't throw any errors!")
                 }
             };
         }
@@ -374,8 +395,9 @@ ts7200_mmap! {
 
 /// [MemoryAdapter] wraps a [Memory] object, implementing the [ArmMemory]
 /// interface such that if an error occurs while accessing memory, the access
-/// "succeeds," and the exception stored until after the CPU cycle is executed.
-/// to trigger an exception accordingly.
+/// will still "succeed," with the corresponding exception being stored until
+// after the CPU cycle is executed. The `take_exception` method can then be used
+// to check if an exception occured.
 struct MemoryAdapter<'a, M: Memory> {
     mem: &'a mut M,
     exception: Option<MemException>,
