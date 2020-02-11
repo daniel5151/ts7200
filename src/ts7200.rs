@@ -19,6 +19,7 @@ pub const HLE_BOOTLOADER_LR: u32 = 0x0001_74c8;
 #[derive(Debug)]
 pub enum FatalError {
     FatalMemException(MemException),
+    UnimplementedPowerState(devices::syscon::PowerState),
 }
 
 enum CheckException {
@@ -181,7 +182,9 @@ impl Ts7200 {
                         self.devices.syscon.set_run_mode();
                     };
                 }
-                PowerState::Standby => unimplemented!(),
+                PowerState::Standby => {
+                    return Err(FatalError::UnimplementedPowerState(PowerState::Standby))
+                }
             };
         }
     }
@@ -261,7 +264,9 @@ impl Target for Ts7200 {
                     self.devices.syscon.set_run_mode();
                 };
             }
-            PowerState::Standby => unimplemented!(),
+            PowerState::Standby => {
+                return Err(FatalError::UnimplementedPowerState(PowerState::Standby))
+            }
         };
 
         Ok(TargetState::Running)
