@@ -21,6 +21,11 @@ pub enum FatalError {
     FatalMemException(MemException),
 }
 
+enum CheckException {
+    Blocking,
+    NonBlocking,
+}
+
 /// A Ts7200 system
 #[derive(Debug)]
 pub struct Ts7200 {
@@ -121,25 +126,15 @@ impl Ts7200 {
         Ok(())
     }
 
-    fn check_exception(&mut self) {
-        for (interrupt, state) in self.interrupt_bus.try_iter() {
-            if state {
-                self.devices.vicmgr.assert_interrupt(interrupt)
-            } else {
-                self.devices.vicmgr.clear_interrupt(interrupt)
-            }
-        }
-
-        if self.devices.vicmgr.fiq() {
-            self.cpu.exception(Exception::FastInterrupt);
+    fn check_exception(&mut self, blocking: CheckException) {
+        let (interrupt, state) = match blocking {
+            CheckException::Blocking => self.interrupt_bus.recv().unwrap(),
+            CheckException::NonBlocking => match self.interrupt_bus.try_recv() {
+                Ok(t) => t,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => panic!(),
+            },
         };
-        if self.devices.vicmgr.irq() {
-            self.cpu.exception(Exception::Interrupt);
-        };
-    }
-
-    fn block_until_exception(&mut self) {
-        let (interrupt, state) = self.interrupt_bus.recv().unwrap();
 
         if state {
             self.devices.vicmgr.assert_interrupt(interrupt)
@@ -178,10 +173,10 @@ impl Ts7200 {
                     if let Some(e) = mem.take_exception() {
                         Ts7200::handle_mem_exception(&self.cpu, e)?;
                     }
-                    self.check_exception();
+                    self.check_exception(CheckException::NonBlocking);
                 }
                 PowerState::Halt => {
-                    self.block_until_exception();
+                    self.check_exception(CheckException::Blocking);
                     if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                         self.devices.syscon.set_run_mode();
                     };
@@ -256,12 +251,12 @@ impl Target for Ts7200 {
                 if let Some(e) = mem.take_exception() {
                     Ts7200::handle_mem_exception(&self.cpu, e)?;
                 }
-                self.check_exception();
+                self.check_exception(CheckException::NonBlocking);
             }
             PowerState::Halt => {
                 // unlike `run`, we do _not_ want to block the gdb thread waiting
                 // for an exception.
-                self.check_exception();
+                self.check_exception(CheckException::NonBlocking);
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
                 };
