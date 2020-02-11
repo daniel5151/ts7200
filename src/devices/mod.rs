@@ -1,9 +1,13 @@
+#![allow(clippy::unit_arg)] // Substantially reduces boilerplate
+
 pub mod ram;
+pub mod syscon;
 pub mod timer;
 pub mod uart;
 pub mod vic;
 
 pub use ram::Ram;
+pub use syscon::Syscon;
 pub use timer::Timer;
 pub use uart::Uart;
 
