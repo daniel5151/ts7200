@@ -1,9 +1,11 @@
 use std::io::Read;
+use std::sync::mpsc;
 
 use arm7tdmi_rs::{reg, Cpu, Exception, Memory as ArmMemory};
 use log::*;
 
 use crate::devices;
+use crate::devices::vic::Interrupt;
 use crate::memory::{
     util::MemSniffer, MemAccess, MemAccessKind, MemAccessVal, MemException, MemExceptionKind,
     MemResult, MemResultExt, Memory,
@@ -25,6 +27,7 @@ pub struct Ts7200 {
     hle: bool,
     cpu: Cpu,
     devices: Ts7200Bus,
+    interrupt_bus: mpsc::Receiver<(Interrupt, bool)>,
 }
 
 impl Ts7200 {
@@ -32,8 +35,7 @@ impl Ts7200 {
     /// Execution begins from OS code (as specified in the elf file), and the
     /// system's peripherals are pre-initialized.
     pub fn new_hle(mut fw_file: impl Read) -> std::io::Result<Ts7200> {
-        // TODO: avoid reading entire elf file into memory. Use Seek to only load
-        // headers we care about.
+        // TODO: use seek instead of reading entire elf file into memory.
 
         // load kernel ELF
         let mut elf_data = Vec::new();
@@ -53,8 +55,11 @@ impl Ts7200 {
             (3, reg::SP, HLE_BOOTLOADER_SP),
         ]);
 
-        // Init system devices
-        let mut bus = Ts7200Bus::new_hle();
+        // create the interrupt bus
+        let (interrupt_bus_tx, interrupt_bus_rx) = mpsc::channel();
+
+        // initialize system devices (in HLE state)
+        let mut bus = Ts7200Bus::new_hle(interrupt_bus_tx);
 
         // copy all in-memory sections from the ELF file into system RAM
         let sections = elf_header
@@ -83,12 +88,11 @@ impl Ts7200 {
             bus.sdram.w32(addr, 0xe59f_f018).unwrap();
         }
 
-        // TODO: instantiate various hardware devices to HLE state
-
         Ok(Ts7200 {
             hle: true,
             cpu,
             devices: bus,
+            interrupt_bus: interrupt_bus_rx,
         })
     }
 
@@ -118,15 +122,30 @@ impl Ts7200 {
     }
 
     fn check_exception(&mut self) {
-        self.devices
-            .timer1
-            .check_interrupts(&mut self.devices.vicmgr);
-        self.devices
-            .timer2
-            .check_interrupts(&mut self.devices.vicmgr);
-        self.devices
-            .timer3
-            .check_interrupts(&mut self.devices.vicmgr);
+        for (interrupt, state) in self.interrupt_bus.try_iter() {
+            if state {
+                self.devices.vicmgr.assert_interrupt(interrupt)
+            } else {
+                self.devices.vicmgr.clear_interrupt(interrupt)
+            }
+        }
+
+        if self.devices.vicmgr.fiq() {
+            self.cpu.exception(Exception::FastInterrupt);
+        };
+        if self.devices.vicmgr.irq() {
+            self.cpu.exception(Exception::Interrupt);
+        };
+    }
+
+    fn block_until_exception(&mut self) {
+        let (interrupt, state) = self.interrupt_bus.recv().unwrap();
+
+        if state {
+            self.devices.vicmgr.assert_interrupt(interrupt)
+        } else {
+            self.devices.vicmgr.clear_interrupt(interrupt)
+        }
 
         if self.devices.vicmgr.fiq() {
             self.cpu.exception(Exception::FastInterrupt);
@@ -161,9 +180,8 @@ impl Ts7200 {
                     }
                     self.check_exception();
                 }
-                // XXX: find less wasteful way to halt CPU
                 PowerState::Halt => {
-                    self.check_exception();
+                    self.block_until_exception();
                     if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                         self.devices.syscon.set_run_mode();
                     };
@@ -240,8 +258,9 @@ impl Target for Ts7200 {
                 }
                 self.check_exception();
             }
-            // XXX: find less wasteful way to halt CPU
             PowerState::Halt => {
+                // unlike `run`, we do _not_ want to block the gdb thread waiting
+                // for an exception.
                 self.check_exception();
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
@@ -322,14 +341,14 @@ pub struct Ts7200Bus {
 }
 
 impl Ts7200Bus {
-    fn new_hle() -> Ts7200Bus {
-        use devices::{vic::Interrupt, *};
+    fn new_hle(interrupt_bus: mpsc::Sender<(Interrupt, bool)>) -> Ts7200Bus {
+        use devices::*;
         Ts7200Bus {
             sdram: Ram::new(32 * 1024 * 1024), // 32 MB
             syscon: Syscon::new_hle(),
-            timer1: Timer::new("timer1", Interrupt::Tc1Ui, 16),
-            timer2: Timer::new("timer2", Interrupt::Tc2Ui, 16),
-            timer3: Timer::new("timer3", Interrupt::Tc3Ui, 32),
+            timer1: Timer::new("timer1", interrupt_bus.clone(), Interrupt::Tc1Ui, 16),
+            timer2: Timer::new("timer2", interrupt_bus.clone(), Interrupt::Tc2Ui, 16),
+            timer3: Timer::new("timer3", interrupt_bus.clone(), Interrupt::Tc3Ui, 32),
             uart1: Uart::new_hle("uart1"),
             uart2: Uart::new_hle("uart2"),
             vicmgr: vic::VicManager::new(),
@@ -388,16 +407,16 @@ ts7200_mmap! {
     0x8093_0000..=0x8093_ffff => syscon,
 }
 
-// The CPU's Memory interface expects all memory accesses to succeed (i.e:
-// return _some_ sort of value). As such, there needs to be some sort of shim
-// between the emulator's fallible [Memory] interface and the CPU's infallible
-// [ArmMemory] interface.
-
+/// The CPU's Memory interface expects all memory accesses to succeed (i.e:
+/// return _some_ sort of value). As such, there needs to be some sort of shim
+/// between the emulator's fallible [Memory] interface and the CPU's infallible
+/// [ArmMemory] interface.
+///
 /// [MemoryAdapter] wraps a [Memory] object, implementing the [ArmMemory]
 /// interface such that if an error occurs while accessing memory, the access
 /// will still "succeed," with the corresponding exception being stored until
-// after the CPU cycle is executed. The `take_exception` method can then be used
-// to check if an exception occured.
+/// after the CPU cycle is executed. The `take_exception` method can then be
+/// used to check if an exception occured.
 struct MemoryAdapter<'a, M: Memory> {
     mem: &'a mut M,
     exception: Option<MemException>,

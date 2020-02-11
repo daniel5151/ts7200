@@ -1,12 +1,10 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
-use super::vic::{Interrupt, VicManager};
+use super::vic::Interrupt;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
@@ -36,8 +34,9 @@ enum InterrupterMsg {
 }
 
 fn spawn_interrupter_thread(
-    assert_interrupt: Arc<AtomicBool>,
-) -> (JoinHandle<()>, Sender<InterrupterMsg>) {
+    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt: Interrupt,
+) -> (JoinHandle<()>, mpsc::Sender<InterrupterMsg>) {
     let (tx, rx) = mpsc::channel::<InterrupterMsg>();
     let handle = thread::spawn(move || {
         let mut next: Option<Instant> = None;
@@ -63,7 +62,7 @@ fn spawn_interrupter_thread(
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // Interrupt!
-                    assert_interrupt.store(true, Ordering::Relaxed);
+                    interrupt_bus.send((interrupt, true)).unwrap();
                     next = Some(
                         next.expect("Impossible: We timed out with an infinite timeout") + period,
                     );
@@ -90,10 +89,10 @@ pub struct Timer {
     last_time: Instant,
     microticks: u32,
 
+    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
+
     interrupter_tx: mpsc::Sender<InterrupterMsg>,
-    assert_interrupt: Arc<AtomicBool>,
-    clear_interrupt: bool,
 }
 
 impl std::fmt::Debug for Timer {
@@ -104,9 +103,13 @@ impl std::fmt::Debug for Timer {
 
 impl Timer {
     /// Create a new Timer
-    pub fn new(label: &'static str, interrupt: Interrupt, bits: usize) -> Timer {
-        let assert_interrupt = Arc::new(AtomicBool::new(false));
-        let (_, interrupter_tx) = spawn_interrupter_thread(assert_interrupt.clone());
+    pub fn new(
+        label: &'static str,
+        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+        interrupt: Interrupt,
+        bits: usize,
+    ) -> Timer {
+        let (_, interrupter_tx) = spawn_interrupter_thread(interrupt_bus.clone(), interrupt);
         Timer {
             label,
             loadval: None,
@@ -120,8 +123,7 @@ impl Timer {
 
             interrupt,
             interrupter_tx,
-            assert_interrupt,
-            clear_interrupt: false,
+            interrupt_bus,
         }
     }
 
@@ -162,16 +164,6 @@ impl Timer {
                     self.val - ticks
                 }
             }
-        }
-    }
-
-    /// Check if interrupts should be asserted or cleared
-    pub fn check_interrupts(&mut self, vicmgr: &mut VicManager) {
-        if self.assert_interrupt.fetch_and(false, Ordering::Relaxed) {
-            vicmgr.assert_interrupt(self.interrupt);
-        } else if self.clear_interrupt {
-            self.clear_interrupt = false;
-            vicmgr.clear_interrupt(self.interrupt);
         }
     }
 }
@@ -266,7 +258,7 @@ impl Memory for Timer {
 
                 Ok(())
             }
-            0x0C => Ok(self.clear_interrupt = true),
+            0x0C => Ok(self.interrupt_bus.send((self.interrupt, false)).unwrap()),
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)
