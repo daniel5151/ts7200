@@ -336,6 +336,7 @@ pub struct Ts7200Bus {
 }
 
 impl Ts7200Bus {
+    #[allow(clippy::redundant_clone)] // Makes the code cleaner in this case
     fn new_hle(interrupt_bus: mpsc::Sender<(Interrupt, bool)>) -> Ts7200Bus {
         use devices::*;
         Ts7200Bus {

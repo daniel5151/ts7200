@@ -51,19 +51,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let in_path = check_shortcut(in_path);
             let out_path = check_shortcut(out_path);
-            system
-                .devices_mut()
-                .uart1
-                .set_io(Some(Box::new(io::NonBlockingFile::new(in_path, out_path)?)))
+            let uart1 = &mut system.devices_mut().uart1;
+
+            io::file::spawn_reader_thread(in_path, uart1.get_input())?;
+            io::file::spawn_writer_thread(out_path, uart1.get_output())?;
         }
         (_, _) => {}
     }
 
     // uart2 is for console communication
-    system
-        .devices_mut()
-        .uart2
-        .set_io(Some(Box::new(io::NonBlockingStdio::new())));
+    let _stdio = {
+        let uart2 = &mut system.devices_mut().uart2;
+        io::stdio::Stdio::new(uart2.get_input(), uart2.get_output())
+    };
 
     let debugger = match args.get(4) {
         Some(port) => Some(new_tcp_gdbstub(

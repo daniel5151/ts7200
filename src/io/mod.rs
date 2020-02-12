@@ -1,10 +1,13 @@
 mod non_blocking_file;
 mod non_blocking_stdio;
 
+pub mod file;
+pub mod stdio;
+
 pub use non_blocking_file::NonBlockingFile;
 pub use non_blocking_stdio::NonBlockingStdio;
 
-/// Incredibly basic trait to read / write bytes
+/// Incredibly basic trait to read / write bytes in a non-blocking way
 pub trait NonBlockingByteIO {
     /// Check if there is data to be read
     fn can_read(&mut self) -> bool;
@@ -25,4 +28,13 @@ impl<T: NonBlockingByteIO> NonBlockingByteIO for Box<T> {
     fn write(&mut self, val: u8) {
         (**self).write(val)
     }
+}
+
+/// Very basic trait to read / write bytes in a blocking way
+pub trait ByteReader {
+    fn read(&mut self) -> u8;
+}
+
+pub trait ByteWriter {
+    fn write(&mut self, val: u8);
 }

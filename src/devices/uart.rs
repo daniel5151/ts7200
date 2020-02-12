@@ -1,12 +1,57 @@
-use crate::io::NonBlockingByteIO;
+use std::collections::VecDeque;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 use crate::memory::{MemResult, MemResultExt, Memory};
 
 /// UART module
 ///
 /// As described in section 14 of the EP93xx User's Guide
+
+#[derive(Debug, Default)]
+struct Status {
+    rx_buf: VecDeque<u8>,
+    tx_buf_size: usize,
+}
+
+impl Status {
+    fn new() -> Self {
+        Default::default()
+    }
+}
+
+fn spawn_reader_thread(status: Arc<Mutex<Status>>) -> Sender<u8> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for b in rx.iter() {
+            status.lock().unwrap().rx_buf.push_back(b);
+        }
+    });
+    tx
+}
+
+fn spawn_writer_thread(status: Arc<Mutex<Status>>) -> (Receiver<u8>, Sender<u8>) {
+    let (outer_tx, outer_rx) = mpsc::channel();
+    let (inner_tx, inner_rx) = mpsc::channel();
+    thread::spawn(move || {
+        for b in inner_rx.iter() {
+            status.lock().unwrap().tx_buf_size -= 1;
+            outer_tx.send(b).unwrap();
+        }
+    });
+    (outer_rx, inner_tx)
+}
+
 pub struct Uart {
     label: &'static str,
-    io: Option<Box<dyn NonBlockingByteIO>>,
+
+    status: Arc<Mutex<Status>>,
+
+    input: Sender<u8>,
+    output: Option<Receiver<u8>>,
+
+    sender_tx: Sender<u8>,
 }
 
 impl std::fmt::Debug for Uart {
@@ -18,12 +63,26 @@ impl std::fmt::Debug for Uart {
 impl Uart {
     /// Create a new uart
     pub fn new_hle(label: &'static str) -> Uart {
-        Uart { label, io: None }
+        let status = Arc::new(Mutex::new(Status::new()));
+
+        let input = spawn_reader_thread(status.clone());
+        let (output, sender_tx) = spawn_writer_thread(status.clone());
+
+        Uart {
+            label,
+            status,
+            input,
+            output: Some(output),
+            sender_tx,
+        }
     }
 
-    /// Set the UART's io handler
-    pub fn set_io(&mut self, io: Option<Box<dyn NonBlockingByteIO>>) {
-        self.io = io;
+    pub fn get_input(&self) -> Sender<u8> {
+        self.input.clone()
+    }
+
+    pub fn get_output(&mut self) -> Receiver<u8> {
+        self.output.take().expect("Output already gotten")
     }
 }
 
@@ -39,12 +98,11 @@ impl Memory for Uart {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             // data (8-bit)
-            0x00 => match self.io {
+            0x00 => {
                 // XXX: properly implement UART DATA read (i.e: respect flags)
-                Some(ref mut io) => Ok(io.read() as u32),
-                // just return a dummy value?
-                None => Ok(0),
-            },
+                let mut status = self.status.lock().unwrap();
+                Ok(status.rx_buf.pop_front().unwrap_or(0) as u32)
+            }
             // read status
             0x04 => crate::mem_unimpl!("RSR_REG"),
             // line control high
@@ -58,17 +116,13 @@ impl Memory for Uart {
             // flag
             0x18 => {
                 // XXX: properly implement UART DATA read (i.e: respect flags)
-                match self.io {
-                    Some(ref mut io) => {
-                        if io.can_read() {
-                            // 0x40 => something to receive
-                            Ok(0x40)
-                        } else {
-                            // 0x10 => Receive fifo empty
-                            Ok(0x10)
-                        }
-                    }
-                    None => Ok(0),
+                let status = self.status.lock().unwrap();
+                if status.rx_buf.is_empty() {
+                    // 0x10 => Receive fifo empty
+                    Ok(0x10)
+                } else {
+                    // 0x40 => something to receive
+                    Ok(0x40)
                 }
             }
             // interrupt identification and clear register
@@ -83,14 +137,11 @@ impl Memory for Uart {
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
         match offset {
             // data (8-bit)
-            0x00 => match self.io {
-                // XXX: properly implement UART DATA write (i.e: respect flags)
-                Some(ref mut io) => {
-                    io.write(val as u8);
-                    Ok(())
-                }
-                None => Ok(()),
-            },
+            0x00 => {
+                self.sender_tx.send(val as u8).unwrap();
+                self.status.lock().unwrap().tx_buf_size += 1;
+                Ok(())
+            }
             // read status
             0x04 => crate::mem_unimpl!("RSR_REG"),
             // line control high
