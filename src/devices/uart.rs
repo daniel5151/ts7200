@@ -323,7 +323,7 @@ impl Memory for Uart {
                 if status.busy {
                     result |= 0x8;
                 } else {
-                    // Hack: set cts when not sending data
+                    // XXX: set cts when not sending data
                     // TODO: determine a better way to do cts
                     result |= 0x1;
                 }
