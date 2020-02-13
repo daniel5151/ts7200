@@ -9,9 +9,9 @@ use log::*;
 use crate::devices::vic::Interrupt;
 use crate::memory::{MemResult, MemResultExt, Memory};
 
-// Derived from section 14 of the EP93xx User's Guide and the
-// provided value for bauddiv from CS452.  A better source on this
-// would be appreciated.
+// Derived from section 14 of the EP93xx User's Guide and the provided value for
+// bauddiv from CS452.
+// TODO: A better source for UARTCLK_HZ would be appreciated.
 const UARTCLK_HZ: u64 = 7_372_800;
 
 #[derive(Debug, Default)]
@@ -207,9 +207,12 @@ fn spawn_writer_thread(
     (outer_rx, inner_tx)
 }
 
-/// UART module
+/// UART device implementing all behavior shared by UARTs 1, 2, and 3 on the
+/// TS-7200. i.e: this device doesn't include any UART-specific functionality,
+/// such as HDCL or Modem controls.
 ///
-/// As described in section 14 of the EP93xx User's Guide
+/// As described in sections 14, 15, and 16 of the EP93xx User's Guide.
+#[derive(Debug)]
 pub struct Uart {
     label: &'static str,
 
@@ -221,12 +224,6 @@ pub struct Uart {
     output: Option<mpsc::Receiver<u8>>,
 
     sender_tx: mpsc::Sender<u8>,
-}
-
-impl std::fmt::Debug for Uart {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Uart").finish()
-    }
 }
 
 impl Uart {
