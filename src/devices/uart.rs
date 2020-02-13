@@ -254,10 +254,13 @@ impl Uart {
         }
     }
 
+    /// Get the input channel for this UART
     pub fn get_input(&self) -> Sender<u8> {
         self.input.clone()
     }
 
+    /// Get the output channel for this UART
+    /// Panics if called more than once
     pub fn get_output(&mut self) -> Receiver<u8> {
         self.output.take().expect("Output already gotten")
     }
