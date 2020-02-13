@@ -4,20 +4,16 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{self as mpsc, select};
 use termion::raw::IntoRawMode;
 
-#[derive(Clone, Copy)]
-enum WriterExit {
-    CtrlCExit,
-    Exit,
-}
+struct CtrlC;
 
-fn spawn_reader_thread(tx: mpsc::Sender<u8>, writer_exit: mpsc::Sender<WriterExit>) {
+fn spawn_reader_thread(tx: mpsc::Sender<u8>, writer_exit: mpsc::Sender<CtrlC>) -> JoinHandle<()> {
     thread::spawn(move || {
         for b in io::stdin().bytes() {
             let b = b.unwrap();
             if b == 3 {
                 // ctrl-c
                 eprintln!("Recieved Ctrl-c - terminating now...");
-                writer_exit.send(WriterExit::CtrlCExit).unwrap();
+                writer_exit.send(CtrlC).unwrap();
             }
             // Key code remapping to match gtkterm.
             let b = match b {
@@ -30,11 +26,11 @@ fn spawn_reader_thread(tx: mpsc::Sender<u8>, writer_exit: mpsc::Sender<WriterExi
                 Err(mpsc::SendError(_)) => return,
             }
         }
-    });
+    })
 }
 
-fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<WriterExit>) {
-    let (exit_tx, exit_rx) = mpsc::unbounded::<WriterExit>();
+fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<CtrlC>) {
+    let (exit_tx, exit_rx) = mpsc::bounded::<CtrlC>(1);
     let (ready_tx, ready_rx) = mpsc::unbounded::<()>();
 
     let handle = thread::spawn(move || {
@@ -60,21 +56,20 @@ fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<
                             stdout.write_all(&[b]).expect("io error");
                             stdout.flush().expect("io error");
                         }
-                        Err(mpsc::RecvError) => return
+                        Err(mpsc::RecvError) => break,
                     }
 
                 }
-                recv(exit_rx) -> kind => {
+                recv(exit_rx) -> _ => {
                     if let Some(handle) = raw_mode_handle {
                         handle.suspend_raw_mode().unwrap();
                     }
-                    match kind {
-                        Ok(WriterExit::CtrlCExit) => std::process::exit(1),
-                        Ok(WriterExit::Exit) => return,
-                        Err(mpsc::RecvError) => panic!("exit sender closed unexpectedly"),
-                    }
+                    std::process::exit(1);
                 }
             }
+        }
+        if let Some(handle) = raw_mode_handle {
+            handle.suspend_raw_mode().unwrap();
         }
     });
 
@@ -83,30 +78,13 @@ fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<
     (handle, exit_tx)
 }
 
-/// Read input from the file/stdin without blocking the main thread.
-pub struct Stdio {
-    writer_exit: mpsc::Sender<WriterExit>,
-    writer_thread: Option<JoinHandle<()>>,
-}
-
-impl Drop for Stdio {
-    fn drop(&mut self) {
-        self.writer_exit.send(WriterExit::Exit).unwrap();
-        self.writer_thread.take().unwrap().join().unwrap();
-    }
-}
-
-impl Stdio {
-    /// Return a new NonBlockingStdio instance backed by stdio
-    /// (set to raw mode)
-    pub fn new(tx: mpsc::Sender<u8>, rx: mpsc::Receiver<u8>) -> Self {
-        // the writer thread MUST be spawned first, as it sets the raw term mode
-        let (writer_handle, writer_exit) = spawn_writer_thread(rx);
-        spawn_reader_thread(tx, writer_exit.clone());
-
-        Stdio {
-            writer_exit,
-            writer_thread: Some(writer_handle),
-        }
-    }
+/// Spawn stdio reader and writer threads that puts stdio in raw mode
+pub fn spawn_threads(
+    tx: mpsc::Sender<u8>,
+    rx: mpsc::Receiver<u8>,
+) -> (JoinHandle<()>, JoinHandle<()>) {
+    // the writer thread MUST be spawned first, as it sets the raw term mode
+    let (writer_handle, writer_exit) = spawn_writer_thread(rx);
+    let reader_handle = spawn_reader_thread(tx, writer_exit);
+    (reader_handle, writer_handle)
 }

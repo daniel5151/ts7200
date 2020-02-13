@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crossbeam_channel as mpsc;
+use crossbeam_channel::{self as mpsc, select};
 use log::*;
 
 use crate::devices::vic::Interrupt;
@@ -135,12 +135,15 @@ impl Status {
     }
 }
 
+struct Exit;
+
 fn spawn_reader_thread(
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
-) -> mpsc::Sender<u8> {
+) -> (JoinHandle<()>, mpsc::Sender<Exit>, mpsc::Sender<u8>) {
     let (tx, rx) = mpsc::unbounded();
-    thread::spawn(move || loop {
+    let (exit_tx, exit_rx) = mpsc::bounded(1);
+    let handle = thread::spawn(move || loop {
         let (can_timeout, bittime, word_len) = {
             let status = status.lock().unwrap();
             (
@@ -150,15 +153,21 @@ fn spawn_reader_thread(
             )
         };
         let b = if can_timeout {
-            match rx.recv_timeout(bittime * 32) {
-                Ok(b) => Some(b),
-                Err(mpsc::RecvTimeoutError::Timeout) => None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            select! {
+                recv(rx) -> b => match b {
+                    Ok(b) => Some(b),
+                    Err(mpsc::RecvError) => panic!("rx closed unexpectedly"),
+                },
+                recv(exit_rx) -> _ => break,
+                default(bittime * 32) => None,
             }
         } else {
-            match rx.recv() {
-                Ok(b) => Some(b),
-                Err(_) => break,
+            select! {
+                recv(rx) -> b => match b {
+                    Ok(b) => Some(b),
+                    Err(mpsc::RecvError) => panic!("rx closed unexpectedly"),
+                },
+                recv(exit_rx) -> _ => break,
             }
         };
 
@@ -184,17 +193,31 @@ fn spawn_reader_thread(
             }
         }
     });
-    tx
+    (handle, exit_tx, tx)
 }
 
 fn spawn_writer_thread(
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
-) -> (mpsc::Receiver<u8>, mpsc::Sender<u8>) {
+) -> (
+    JoinHandle<()>,
+    mpsc::Sender<Exit>,
+    mpsc::Receiver<u8>,
+    mpsc::Sender<u8>,
+) {
     let (outer_tx, outer_rx) = mpsc::unbounded();
     let (inner_tx, inner_rx) = mpsc::unbounded();
-    thread::spawn(move || {
-        for b in inner_rx.iter() {
+    let (exit_tx, exit_rx) = mpsc::bounded(1);
+    let handle = thread::spawn(move || {
+        loop {
+            let b = select! {
+                recv(inner_rx) -> b => match b {
+                    Ok(b) => b,
+                    Err(mpsc::RecvError) => panic!("tx closed unexpectedly"),
+                },
+                recv(exit_rx) -> _ => break,
+            };
+
             // Sleep for the appropriate time
             let (bittime, word_len) = {
                 let mut status = status.lock().unwrap();
@@ -225,8 +248,17 @@ fn spawn_writer_thread(
                 status.update_interrupts(&interrupt_bus);
             }
         }
+        for b in inner_rx.try_iter() {
+            outer_tx.send(b).expect("io receiver closed unexpectedly")
+        }
     });
-    (outer_rx, inner_tx)
+    (handle, exit_tx, outer_rx, inner_tx)
+}
+
+#[derive(Debug)]
+enum IoState {
+    Uninstalled(mpsc::Sender<u8>, mpsc::Receiver<u8>),
+    Installed(Option<JoinHandle<()>>, Option<JoinHandle<()>>),
 }
 
 /// UART device implementing all behavior shared by UARTs 1, 2, and 3 on the
@@ -242,8 +274,10 @@ pub struct Uart {
 
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 
-    input: Option<mpsc::Sender<u8>>,
-    output: Option<mpsc::Receiver<u8>>,
+    reader: Option<(mpsc::Sender<Exit>, JoinHandle<()>)>,
+    writer: Option<(mpsc::Sender<Exit>, JoinHandle<()>)>,
+
+    io: Option<IoState>,
 
     sender_tx: mpsc::Sender<u8>,
 }
@@ -257,31 +291,69 @@ impl Uart {
     ) -> Uart {
         let status = Arc::new(Mutex::new(Status::new_hle(index)));
 
-        let input = spawn_reader_thread(status.clone(), interrupt_bus.clone());
-        let (output, sender_tx) = spawn_writer_thread(status.clone(), interrupt_bus.clone());
+        let (reader_handle, reader_exit, input) =
+            spawn_reader_thread(status.clone(), interrupt_bus.clone());
+        let (writer_handle, writer_exit, output, sender_tx) =
+            spawn_writer_thread(status.clone(), interrupt_bus.clone());
 
         Uart {
             label,
             status,
             interrupt_bus,
-            input: Some(input),
-            output: Some(output),
+            reader: Some((reader_exit, reader_handle)),
+            writer: Some((writer_exit, writer_handle)),
+            io: Some(IoState::Uninstalled(input, output)),
             sender_tx,
         }
     }
 
-    /// Take the input channel for this UART
-    pub fn take_input(&mut self) -> Option<mpsc::Sender<u8>> {
-        self.input.take()
-    }
-
-    /// Take the input channel for this UART
-    pub fn take_output(&mut self) -> Option<mpsc::Receiver<u8>> {
-        self.output.take()
+    /// Install the io channels for this UART
+    // TODO: PRILLIIIIIIIKKKKKKKKKKKKK THIS LANGUAGE IS TRASH
+    pub fn install_io(
+        &mut self,
+        install_io: impl FnOnce(
+            mpsc::Sender<u8>,
+            mpsc::Receiver<u8>,
+        ) -> Result<(Option<JoinHandle<()>>, Option<JoinHandle<()>>), ()>,
+    ) -> Result<(), ()> {
+        match self.io.take().expect("No io state") {
+            IoState::Uninstalled(tx, rx) => {
+                let (h1, h2) = install_io(tx, rx)?;
+                self.io = Some(IoState::Installed(h1, h2));
+                Ok(())
+            }
+            IoState::Installed(h1, h2) => {
+                self.io = Some(IoState::Installed(h1, h2));
+                Err(())
+            } // XXX: Better error type
+        }
     }
 
     fn lock_status(&mut self) -> MutexGuard<Status> {
         self.status.lock().unwrap()
+    }
+}
+
+impl Drop for Uart {
+    fn drop(&mut self) {
+        let (reader_exit, reader_handle) = self.reader.take().expect("reader already taken");
+        let (writer_exit, writer_handle) = self.writer.take().expect("writer already taken");
+        reader_exit.send(Exit).unwrap();
+        writer_exit.send(Exit).unwrap();
+        reader_handle.join().expect("reader failed to join");
+        writer_handle.join().expect("writer failed to join");
+
+        match self.io.take().expect("No io state") {
+            IoState::Uninstalled(_, _) => {}
+            IoState::Installed(h1, h2) => {
+                if let Some(h1) = h1 {
+                    h1.join().expect("h1 failed to join");
+                }
+                if let Some(h2) = h2 {
+                    h2.join().expect("h2 failed to join");
+                };
+            }
+        }
     }
 }
 
@@ -360,10 +432,6 @@ impl Memory for Uart {
             0x00 => {
                 let mut status = self.status.lock().unwrap();
                 // Drop the byte if the fifo is full
-                // NOTE: This isn't validated to be the same as
-                // hardware behaviour, but it should produce
-                // similar-looking errors to hardware in the long
-                // run if there's a problem
                 if status.tx_buf_size < status.fifo_size {
                     // A little awkward, but it is important that
                     // this send happens while under lock, as

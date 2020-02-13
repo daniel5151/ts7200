@@ -53,8 +53,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let out_path = check_shortcut(out_path);
             let uart1 = &mut system.devices_mut().uart1;
 
-            crate::io::file::spawn_reader_thread(in_path, uart1.take_input().unwrap())?;
-            crate::io::file::spawn_writer_thread(out_path, uart1.take_output().unwrap())?;
+            uart1
+                .install_io(|tx, rx| {
+                    let reader = crate::io::file::spawn_reader_thread(in_path, tx)?;
+                    let writer = crate::io::file::spawn_writer_thread(out_path, rx)?;
+                    Ok((Some(reader), Some(writer)))
+                })
+                .unwrap();
+            // TODO PRILLIIIIK
         }
         (_, _) => {}
     }
@@ -62,9 +68,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // uart2 is for console communication
     // Unused variable here to ensure this doesn't get dropped until
     // we exit.
-    let _stdio = {
+    {
         let uart2 = &mut system.devices_mut().uart2;
-        crate::io::stdio::Stdio::new(uart2.take_input().unwrap(), uart2.take_output().unwrap())
+
+        uart2
+            .install_io(|rx, tx| {
+                let (reader, writer) = crate::io::stdio::spawn_threads(rx, tx);
+                Ok((Some(reader), Some(writer)))
+            })
+            .unwrap();
+        // TODO PRILLIIIIK
     };
 
     let debugger = match args.get(4) {
