@@ -142,6 +142,9 @@ impl Memory for Vic {
             0x1c => Ok(self.software_status &= !val),
             // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
             0x20 => crate::mem_stub!("PROTECTION"),
+            // Writing to this signals to the Vic that the interrupt
+            // has been serviced.  We don't implement the behaviour
+            // that cares about that for now, so no-op.
             0x30 => Ok(()),
             0x34 => Ok(self.default_isr = val),
             0x100..=0x13c => {

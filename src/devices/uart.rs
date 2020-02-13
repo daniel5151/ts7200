@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
@@ -9,40 +9,10 @@ use log::*;
 use crate::devices::vic::Interrupt;
 use crate::memory::{MemResult, MemResultExt, Memory};
 
-/// UART module
-///
-/// As described in section 14 of the EP93xx User's Guide
-
-static UARTCLK_HZ: u64 = 7_372_800;
-
-#[derive(Debug, Copy, Clone)]
-enum UartInt {
-    Tx = 0,
-    Rx = 1,
-    Combined = 2,
-}
-
-impl UartInt {
-    fn hw_int(self, index: u8) -> Interrupt {
-        use Interrupt::*;
-        use UartInt::*;
-        match (self, index) {
-            (Rx, 1) => Uart1RxIntr1,
-            (Tx, 1) => Uart1TxIntr1,
-            (Combined, 1) => IntUart1,
-            (Rx, 2) => Uart2RxIntr2,
-            (Tx, 2) => Uart2TxIntr2,
-            (Combined, 2) => IntUart2,
-            (Rx, 3) => Uart3RxIntr3,
-            (Tx, 3) => Uart3TxIntr3,
-            (Combined, 3) => IntUart3,
-            _ => panic!("Unexpected index/interrupt"),
-        }
-    }
-}
-
-static INT_MASKS: [(UartInt, u8); 3] =
-    [(UartInt::Tx, 4), (UartInt::Rx, 2), (UartInt::Combined, 15)];
+// Derived from section 14 of the EP93xx User's Guide and the
+// provided value for bauddiv from CS452.  A better source on this
+// would be appreciated.
+const UARTCLK_HZ: u64 = 7_372_800;
 
 #[derive(Debug, Default)]
 struct Status {
@@ -80,10 +50,10 @@ impl Status {
         let bauddiv = ((self.linctrl[1] & 0xff) as u64) << 32 | (self.linctrl[2] as u64);
         let baud = UARTCLK_HZ / 16 / (bauddiv + 1);
         self.bittime = Duration::from_nanos(1_000_000_000 / baud);
-        self.word_len = 1 + // start bit
-            8 + // word length TODO: Allow for other word lengths than 8
-            (if high & 0x8 != 0 { 2 } else { 1 }) + // stop bits
-            (if high & 0x2 != 0 { 1 } else { 0 }); // parity bit
+        self.word_len = 1 // start bit
+            + 8 // word length TODO: Allow for other word lengths than 8
+            + (if high & 0x8 != 0 { 2 } else { 1 }) // stop bits
+            + (if high & 0x2 != 0 { 1 } else { 0 }); // parity bit
         self.fifo_size = if (high & 0x10) != 0 { 16 } else { 1 }
     }
 
@@ -107,10 +77,36 @@ impl Status {
         (result & (self.ctrl >> 3)) as u8
     }
 
-    fn update_interrupts(&mut self, interrupt_bus: &Sender<(Interrupt, bool)>) {
+    fn update_interrupts(&mut self, interrupt_bus: &mpsc::Sender<(Interrupt, bool)>) {
+        #[derive(Debug, Copy, Clone)]
+        enum UartInt {
+            Tx = 0,
+            Rx = 1,
+            Combined = 2,
+        }
+
+        impl UartInt {
+            fn hw_int(self, index: u8) -> Interrupt {
+                use Interrupt::*;
+                use UartInt::*;
+                match (self, index) {
+                    (Rx, 1) => Uart1RxIntr1,
+                    (Tx, 1) => Uart1TxIntr1,
+                    (Combined, 1) => IntUart1,
+                    (Rx, 2) => Uart2RxIntr2,
+                    (Tx, 2) => Uart2TxIntr2,
+                    (Combined, 2) => IntUart2,
+                    (Rx, 3) => Uart3RxIntr3,
+                    (Tx, 3) => Uart3TxIntr3,
+                    (Combined, 3) => IntUart3,
+                    _ => panic!("Unexpected index/interrupt"),
+                }
+            }
+        }
+
         let int_id = self.get_int_id();
 
-        for (int, mask) in INT_MASKS.iter() {
+        for (int, mask) in [(UartInt::Tx, 4), (UartInt::Rx, 2), (UartInt::Combined, 15)].iter() {
             let assert = (int_id & mask) != 0;
             if assert != self.int_asserted[*int as usize] {
                 self.int_asserted[*int as usize] = assert;
@@ -124,9 +120,8 @@ impl Status {
 
 fn spawn_reader_thread(
     status: Arc<Mutex<Status>>,
-    interrupt_bus: Sender<(Interrupt, bool)>,
-) -> Sender<u8> {
-    let _ = interrupt_bus;
+    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+) -> mpsc::Sender<u8> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || loop {
         let (can_timeout, bittime, word_len) = {
@@ -138,11 +133,10 @@ fn spawn_reader_thread(
             )
         };
         let b = if can_timeout {
-            use RecvTimeoutError::*;
             match rx.recv_timeout(bittime * 32) {
                 Ok(b) => Some(b),
-                Err(Timeout) => None,
-                Err(Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
         } else {
             match rx.recv() {
@@ -178,9 +172,8 @@ fn spawn_reader_thread(
 
 fn spawn_writer_thread(
     status: Arc<Mutex<Status>>,
-    interrupt_bus: Sender<(Interrupt, bool)>,
-) -> (Receiver<u8>, Sender<u8>) {
-    let _ = interrupt_bus;
+    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+) -> (mpsc::Receiver<u8>, mpsc::Sender<u8>) {
     let (outer_tx, outer_rx) = mpsc::channel();
     let (inner_tx, inner_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -213,17 +206,20 @@ fn spawn_writer_thread(
     (outer_rx, inner_tx)
 }
 
+/// UART module
+///
+/// As described in section 14 of the EP93xx User's Guide
 pub struct Uart {
     label: &'static str,
 
     status: Arc<Mutex<Status>>,
 
-    interrupt_bus: Sender<(Interrupt, bool)>,
+    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 
-    input: Sender<u8>,
-    output: Option<Receiver<u8>>,
+    input: Option<mpsc::Sender<u8>>,
+    output: Option<mpsc::Receiver<u8>>,
 
-    sender_tx: Sender<u8>,
+    sender_tx: mpsc::Sender<u8>,
 }
 
 impl std::fmt::Debug for Uart {
@@ -236,7 +232,7 @@ impl Uart {
     /// Create a new uart
     pub fn new_hle(
         label: &'static str,
-        interrupt_bus: Sender<(Interrupt, bool)>,
+        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
         index: u8,
     ) -> Uart {
         let status = Arc::new(Mutex::new(Status::new(index)));
@@ -248,21 +244,20 @@ impl Uart {
             label,
             status,
             interrupt_bus,
-            input,
+            input: Some(input),
             output: Some(output),
             sender_tx,
         }
     }
 
-    /// Get the input channel for this UART
-    pub fn get_input(&self) -> Sender<u8> {
-        self.input.clone()
+    /// Take the input channel for this UART
+    pub fn take_input(&mut self) -> Option<mpsc::Sender<u8>> {
+        self.input.take()
     }
 
-    /// Get the output channel for this UART
-    /// Panics if called more than once
-    pub fn get_output(&mut self) -> Receiver<u8> {
-        self.output.take().expect("Output already gotten")
+    /// Take the input channel for this UART
+    pub fn take_output(&mut self) -> Option<mpsc::Receiver<u8>> {
+        self.output.take()
     }
 
     fn lock_status(&mut self) -> MutexGuard<Status> {
@@ -284,6 +279,7 @@ impl Memory for Uart {
             // data (8-bit)
             0x00 => {
                 let mut status = self.status.lock().unwrap();
+                // If the buffer is empty return a dummy value
                 let val = status.rx_buf.pop_front().unwrap_or(0) as u32;
                 if status.rx_buf.is_empty() {
                     status.timeout = false;

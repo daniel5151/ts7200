@@ -53,16 +53,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let out_path = check_shortcut(out_path);
             let uart1 = &mut system.devices_mut().uart1;
 
-            io::file::spawn_reader_thread(in_path, uart1.get_input())?;
-            io::file::spawn_writer_thread(out_path, uart1.get_output())?;
+            crate::io::file::spawn_reader_thread(in_path, uart1.take_input().unwrap())?;
+            crate::io::file::spawn_writer_thread(out_path, uart1.take_output().unwrap())?;
         }
         (_, _) => {}
     }
 
     // uart2 is for console communication
+    // Unused variable here to ensure this doesn't get dropped until
+    // we exit.
     let _stdio = {
         let uart2 = &mut system.devices_mut().uart2;
-        io::stdio::Stdio::new(uart2.get_input(), uart2.get_output())
+        crate::io::stdio::Stdio::new(uart2.take_input().unwrap(), uart2.take_output().unwrap())
     };
 
     let debugger = match args.get(4) {

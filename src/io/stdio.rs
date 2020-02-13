@@ -1,5 +1,5 @@
 use std::io::{self, Read, Write};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
 use termion::raw::IntoRawMode;
@@ -11,7 +11,7 @@ enum WriterMsg {
     Exit,
 }
 
-fn spawn_reader_thread(tx: Sender<u8>, stdout_tx: Sender<WriterMsg>) {
+fn spawn_reader_thread(tx: mpsc::Sender<u8>, stdout_tx: mpsc::Sender<WriterMsg>) {
     thread::spawn(move || {
         for b in io::stdin().bytes() {
             let b = b.unwrap();
@@ -30,7 +30,7 @@ fn spawn_reader_thread(tx: Sender<u8>, stdout_tx: Sender<WriterMsg>) {
     });
 }
 
-fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
+fn spawn_writer_thread() -> (JoinHandle<()>, mpsc::Sender<WriterMsg>) {
     let (tx, rx) = mpsc::channel::<WriterMsg>();
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
     let handle = thread::spawn(move || {
@@ -73,19 +73,24 @@ fn spawn_writer_thread() -> (JoinHandle<()>, Sender<WriterMsg>) {
     (handle, tx)
 }
 
-fn spawn_output_transfer_thread(rx: Receiver<u8>, stdout_tx: Sender<WriterMsg>) {
+fn spawn_output_transfer_thread(rx: mpsc::Receiver<u8>, stdout_tx: mpsc::Sender<WriterMsg>) {
     thread::spawn(move || {
         for b in rx.iter() {
-            // Don't unwrap the result of send, the other end will
-            // close when we're shutting down.
-            let _ = stdout_tx.send(WriterMsg::Data(b));
+            match stdout_tx.send(WriterMsg::Data(b)) {
+                Ok(()) => {}
+                Err(mpsc::SendError(_)) => {
+                    // Don't unwrap the result of send, the other end will
+                    // close when we're shutting down.
+                    return;
+                }
+            }
         }
     });
 }
 
 /// Read input from the file/stdin without blocking the main thread.
 pub struct Stdio {
-    stdout_tx: Sender<WriterMsg>,
+    stdout_tx: mpsc::Sender<WriterMsg>,
     writer_thread: Option<JoinHandle<()>>,
 }
 
@@ -99,7 +104,7 @@ impl Drop for Stdio {
 impl Stdio {
     /// Return a new NonBlockingStdio instance backed by stdio
     /// (set to raw mode)
-    pub fn new(tx: Sender<u8>, rx: Receiver<u8>) -> Self {
+    pub fn new(tx: mpsc::Sender<u8>, rx: mpsc::Receiver<u8>) -> Self {
         // the writer thread MUST be spawned first, as it sets the raw term mode
         let (writer_handle, stdout_tx) = spawn_writer_thread();
         spawn_output_transfer_thread(rx, stdout_tx.clone());
