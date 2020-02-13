@@ -207,7 +207,13 @@ fn spawn_writer_thread(
                 (status.bittime, status.word_len)
             };
             thread::sleep(bittime * word_len);
-            outer_tx.send(b).unwrap();
+            match outer_tx.send(b) {
+                Ok(()) => (),
+                Err(mpsc::SendError(_)) => {
+                    // Receiving end closed
+                    return;
+                }
+            }
             {
                 let mut status = status.lock().unwrap();
 
