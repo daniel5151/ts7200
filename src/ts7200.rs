@@ -345,8 +345,8 @@ impl Ts7200Bus {
             timer1: Timer::new("timer1", interrupt_bus.clone(), Interrupt::Tc1Ui, 16),
             timer2: Timer::new("timer2", interrupt_bus.clone(), Interrupt::Tc2Ui, 16),
             timer3: Timer::new("timer3", interrupt_bus.clone(), Interrupt::Tc3Ui, 32),
-            uart1: Uart::new_hle("uart1"),
-            uart2: Uart::new_hle("uart2"),
+            uart1: Uart::new_hle("uart1", interrupt_bus.clone(), 1),
+            uart2: Uart::new_hle("uart2", interrupt_bus.clone(), 2),
             vicmgr: vic::VicManager::new(),
         }
     }
