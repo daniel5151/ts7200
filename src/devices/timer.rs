@@ -1,6 +1,7 @@
-use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+use crossbeam_channel as mpsc;
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
@@ -37,7 +38,7 @@ fn spawn_interrupter_thread(
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
 ) -> (JoinHandle<()>, mpsc::Sender<InterrupterMsg>) {
-    let (tx, rx) = mpsc::channel::<InterrupterMsg>();
+    let (tx, rx) = mpsc::unbounded::<InterrupterMsg>();
     let handle = thread::spawn(move || {
         let mut next: Option<Instant> = None;
         let mut period = Default::default();

@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
-use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
+use crossbeam_channel as mpsc;
 use termion::raw::IntoRawMode;
 
 #[derive(Clone, Copy)]
@@ -31,8 +31,8 @@ fn spawn_reader_thread(tx: mpsc::Sender<u8>, stdout_tx: mpsc::Sender<WriterMsg>)
 }
 
 fn spawn_writer_thread() -> (JoinHandle<()>, mpsc::Sender<WriterMsg>) {
-    let (tx, rx) = mpsc::channel::<WriterMsg>();
-    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::unbounded::<WriterMsg>();
+    let (ready_tx, ready_rx) = mpsc::unbounded::<()>();
     let handle = thread::spawn(move || {
         let mut stdout = io::stdout();
 

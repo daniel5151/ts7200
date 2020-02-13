@@ -9,6 +9,7 @@ arm7tdmi-rs = { path = "../arm7tdmi-rs", features = ["advanced_disasm"] }
 gdbstub = { path = "../gdbstub", features = ["std"] }
 
 byteorder = "1.3"
+crossbeam-channel = "0.4"
 goblin = "0.1"
 log = "0.4"
 pretty_env_logger = "0.3"

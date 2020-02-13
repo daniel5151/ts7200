@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+use crossbeam_channel as mpsc;
 use log::*;
 
 use crate::devices::vic::Interrupt;
@@ -139,7 +139,7 @@ fn spawn_reader_thread(
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 ) -> mpsc::Sender<u8> {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::unbounded();
     thread::spawn(move || loop {
         let (can_timeout, bittime, word_len) = {
             let status = status.lock().unwrap();
@@ -191,8 +191,8 @@ fn spawn_writer_thread(
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 ) -> (mpsc::Receiver<u8>, mpsc::Sender<u8>) {
-    let (outer_tx, outer_rx) = mpsc::channel();
-    let (inner_tx, inner_rx) = mpsc::channel();
+    let (outer_tx, outer_rx) = mpsc::unbounded();
+    let (inner_tx, inner_rx) = mpsc::unbounded();
     thread::spawn(move || {
         for b in inner_rx.iter() {
             // Sleep for the appropriate time

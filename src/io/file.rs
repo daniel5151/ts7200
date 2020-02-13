@@ -1,8 +1,9 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::sync::mpsc;
 use std::thread;
+
+use crossbeam_channel as mpsc;
 
 /// Spawns a thread that reads bytes received from a file at `path` to `tx`
 pub fn spawn_reader_thread(path: impl AsRef<Path>, tx: mpsc::Sender<u8>) -> io::Result<()> {

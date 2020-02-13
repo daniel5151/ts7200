@@ -1,7 +1,7 @@
 use std::io::Read;
-use std::sync::mpsc;
 
 use arm7tdmi_rs::{reg, Cpu, Exception, Memory as ArmMemory};
+use crossbeam_channel as mpsc;
 use log::*;
 
 use crate::devices;
@@ -61,7 +61,7 @@ impl Ts7200 {
         ]);
 
         // create the interrupt bus
-        let (interrupt_bus_tx, interrupt_bus_rx) = mpsc::channel();
+        let (interrupt_bus_tx, interrupt_bus_rx) = mpsc::unbounded();
 
         // initialize system devices (in HLE state)
         let mut bus = Ts7200Bus::new_hle(interrupt_bus_tx);
