@@ -45,6 +45,22 @@ impl Status {
         s
     }
 
+    fn new_hle(index: u8) -> Self {
+        let mut s = Self::new(index);
+        // 8 bit word, FIFO enable
+        s.linctrl[0] = 0x70;
+        // 115200 baud
+        s.linctrl[1] = 0;
+        s.linctrl[2] = 3;
+
+        // UART enable
+        s.ctrl = 1;
+
+        s.update_linctrl();
+
+        s
+    }
+
     fn update_linctrl(&mut self) {
         let high = self.linctrl[0];
         let bauddiv = ((self.linctrl[1] & 0xff) as u64) << 32 | (self.linctrl[2] as u64);
@@ -233,7 +249,7 @@ impl Uart {
         interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
         index: u8,
     ) -> Uart {
-        let status = Arc::new(Mutex::new(Status::new(index)));
+        let status = Arc::new(Mutex::new(Status::new_hle(index)));
 
         let input = spawn_reader_thread(status.clone(), interrupt_bus.clone());
         let (output, sender_tx) = spawn_writer_thread(status.clone(), interrupt_bus.clone());
