@@ -62,7 +62,7 @@ impl Vic {
     }
 
     fn isr_address(&self) -> u32 {
-        if self.fiq() || !self.fiq() {
+        if self.fiq() || !self.irq() {
             self.default_isr
         } else {
             let irqs = self.enabled_active_interrupts() & !self.select;
@@ -142,7 +142,7 @@ impl Memory for Vic {
             0x1c => Ok(self.software_status &= !val),
             // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
             0x20 => crate::mem_stub!("PROTECTION"),
-            0x30 => crate::mem_stub!("VECTADDR"),
+            0x30 => Ok(()),
             0x34 => Ok(self.default_isr = val),
             0x100..=0x13c => {
                 let index = ((offset - 0x100) / 4) as usize;
