@@ -87,7 +87,7 @@ impl Status {
         self.fifo_size = if (high & 0x10) != 0 { 16 } else { 1 }
     }
 
-    // Returns the interrupt status in the format of the UARTxIntIDIntClr register
+    /// Returns the interrupt status in the format of the UARTxIntIDIntClr register
     fn get_int_id(&self) -> u8 {
         let mut result = 0;
         if self.timeout {
