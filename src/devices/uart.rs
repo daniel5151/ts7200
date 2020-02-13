@@ -358,7 +358,7 @@ impl Memory for Uart {
                     status.tx_buf_size += 1;
                     status.update_interrupts(&self.interrupt_bus);
                 } else {
-                    warn!("UART {} dropping sent byte due to full FIFO", status.index);
+                    warn!("{} dropping sent byte due to full FIFO", self.label());
                 }
                 Ok(())
             }
