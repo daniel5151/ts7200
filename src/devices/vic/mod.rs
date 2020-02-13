@@ -101,8 +101,8 @@ impl Memory for Vic {
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
-            0x00 => Ok(self.rawstatus() & !self.select),
-            0x04 => Ok(self.rawstatus() & self.select),
+            0x00 => Ok(self.enabled_active_interrupts() & !self.select),
+            0x04 => Ok(self.enabled_active_interrupts() & self.select),
             0x08 => Ok(self.rawstatus()),
             0x0c => Ok(self.select),
             0x10 => Ok(self.enabled),
