@@ -57,7 +57,8 @@ impl Status {
         self.fifo_size = if (high & 0x10) != 0 { 16 } else { 1 }
     }
 
-    /// Returns the interrupt status in the format of the UARTxIntIDIntClr register
+    /// Returns the interrupt status in the format of the UARTxIntIDIntClr
+    /// register
     fn get_int_id(&self) -> u8 {
         let mut result = 0;
         if self.timeout {
@@ -354,7 +355,7 @@ impl Memory for Uart {
                     status.tx_buf_size += 1;
                     status.update_interrupts(&self.interrupt_bus);
                 } else {
-                    warn!("{} dropping sent byte due to full FIFO", self.label());
+                    warn!("{} dropping sent byte due to full FIFO", self.label);
                 }
                 Ok(())
             }
