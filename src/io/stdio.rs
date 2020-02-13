@@ -1,38 +1,42 @@
 use std::io::{self, Read, Write};
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel as mpsc;
+use crossbeam_channel::{self as mpsc, select};
 use termion::raw::IntoRawMode;
 
 #[derive(Clone, Copy)]
-enum WriterMsg {
-    Data(u8),
+enum WriterExit {
     CtrlCExit,
     Exit,
 }
 
-fn spawn_reader_thread(tx: mpsc::Sender<u8>, stdout_tx: mpsc::Sender<WriterMsg>) {
+fn spawn_reader_thread(tx: mpsc::Sender<u8>, writer_exit: mpsc::Sender<WriterExit>) {
     thread::spawn(move || {
         for b in io::stdin().bytes() {
             let b = b.unwrap();
             if b == 3 {
                 // ctrl-c
                 eprintln!("Recieved Ctrl-c - terminating now...");
-                stdout_tx.send(WriterMsg::CtrlCExit).unwrap();
+                writer_exit.send(WriterExit::CtrlCExit).unwrap();
             }
             // Key code remapping to match gtkterm.
             let b = match b {
                 127 => 8,
                 _ => b,
             };
-            tx.send(b).unwrap();
+
+            match tx.send(b) {
+                Ok(()) => {}
+                Err(mpsc::SendError(_)) => return,
+            }
         }
     });
 }
 
-fn spawn_writer_thread() -> (JoinHandle<()>, mpsc::Sender<WriterMsg>) {
-    let (tx, rx) = mpsc::unbounded::<WriterMsg>();
+fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<WriterExit>) {
+    let (exit_tx, exit_rx) = mpsc::unbounded::<WriterExit>();
     let (ready_tx, ready_rx) = mpsc::unbounded::<()>();
+
     let handle = thread::spawn(move || {
         let mut stdout = io::stdout();
 
@@ -48,55 +52,46 @@ fn spawn_writer_thread() -> (JoinHandle<()>, mpsc::Sender<WriterMsg>) {
 
         ready_tx.send(()).unwrap();
 
-        for b in rx {
-            match b {
-                WriterMsg::Data(b) => {
-                    stdout.write_all(&[b]).expect("io error");
-                    stdout.flush().expect("io error");
-                }
-                WriterMsg::CtrlCExit => {
-                    if let Some(handle) = raw_mode_handle {
-                        handle.suspend_raw_mode().unwrap();
+        loop {
+            select! {
+                recv(rx) -> b => {
+                    match b {
+                        Ok(b) => {
+                            stdout.write_all(&[b]).expect("io error");
+                            stdout.flush().expect("io error");
+                        }
+                        Err(mpsc::RecvError) => return
                     }
-                    std::process::exit(1);
-                }
-                WriterMsg::Exit => {
-                    if let Some(handle) = raw_mode_handle {
-                        handle.suspend_raw_mode().unwrap();
-                    }
-                    return;
-                }
-            }
-        }
-    });
-    ready_rx.recv().unwrap();
-    (handle, tx)
-}
 
-fn spawn_output_transfer_thread(rx: mpsc::Receiver<u8>, stdout_tx: mpsc::Sender<WriterMsg>) {
-    thread::spawn(move || {
-        for b in rx.iter() {
-            match stdout_tx.send(WriterMsg::Data(b)) {
-                Ok(()) => {}
-                Err(mpsc::SendError(_)) => {
-                    // Don't unwrap the result of send, the other end will
-                    // close when we're shutting down.
-                    return;
+                }
+                recv(exit_rx) -> kind => {
+                    if let Some(handle) = raw_mode_handle {
+                        handle.suspend_raw_mode().unwrap();
+                    }
+                    match kind {
+                        Ok(WriterExit::CtrlCExit) => std::process::exit(1),
+                        Ok(WriterExit::Exit) => return,
+                        Err(mpsc::RecvError) => panic!("exit sender closed unexpectedly"),
+                    }
                 }
             }
         }
     });
+
+    ready_rx.recv().unwrap();
+
+    (handle, exit_tx)
 }
 
 /// Read input from the file/stdin without blocking the main thread.
 pub struct Stdio {
-    stdout_tx: mpsc::Sender<WriterMsg>,
+    writer_exit: mpsc::Sender<WriterExit>,
     writer_thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for Stdio {
     fn drop(&mut self) {
-        self.stdout_tx.send(WriterMsg::Exit).unwrap();
+        self.writer_exit.send(WriterExit::Exit).unwrap();
         self.writer_thread.take().unwrap().join().unwrap();
     }
 }
@@ -106,12 +101,11 @@ impl Stdio {
     /// (set to raw mode)
     pub fn new(tx: mpsc::Sender<u8>, rx: mpsc::Receiver<u8>) -> Self {
         // the writer thread MUST be spawned first, as it sets the raw term mode
-        let (writer_handle, stdout_tx) = spawn_writer_thread();
-        spawn_output_transfer_thread(rx, stdout_tx.clone());
-        spawn_reader_thread(tx, stdout_tx.clone());
+        let (writer_handle, writer_exit) = spawn_writer_thread(rx);
+        spawn_reader_thread(tx, writer_exit.clone());
 
         Stdio {
-            stdout_tx,
+            writer_exit,
             writer_thread: Some(writer_handle),
         }
     }
