@@ -74,9 +74,11 @@ fn spawn_interrupter_thread(
     (handle, tx)
 }
 
-/// Timer module
+/// 32bit timer device with configurable emulated wrap value (for emulating 16
+/// bit timers as well).
 ///
 /// As described in section 18 of the EP93xx User's Guide
+#[derive(Debug)]
 pub struct Timer {
     label: &'static str,
     // registers
@@ -94,12 +96,6 @@ pub struct Timer {
     interrupt: Interrupt,
 
     interrupter_tx: mpsc::Sender<InterrupterMsg>,
-}
-
-impl std::fmt::Debug for Timer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Timer").finish()
-    }
 }
 
 impl Timer {
