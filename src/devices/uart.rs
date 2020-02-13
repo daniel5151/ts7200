@@ -161,7 +161,7 @@ fn spawn_reader_thread(
                     status.update_interrupts(&interrupt_bus);
                 } else {
                     warn!(
-                        "UART {} dropping received byte due to full FIFO",
+                        "UART{} dropping received byte due to full FIFO",
                         status.index
                     );
                 }
