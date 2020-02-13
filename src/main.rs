@@ -55,9 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             uart1
                 .install_io(|tx, rx| {
-                    let reader = crate::io::file::spawn_reader_thread(in_path, tx)?;
+                    let _ = crate::io::file::spawn_reader_thread(in_path, tx)?;
                     let writer = crate::io::file::spawn_writer_thread(out_path, rx)?;
-                    Ok((Some(reader), Some(writer)))
+                    Ok((None, Some(writer)))
                 })
                 .unwrap();
             // TODO PRILLIIIIK
@@ -73,8 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         uart2
             .install_io(|rx, tx| {
-                let (reader, writer) = crate::io::stdio::spawn_threads(rx, tx);
-                Ok((Some(reader), Some(writer)))
+                let (_, writer) = crate::io::stdio::spawn_threads(rx, tx);
+                Ok((None, Some(writer)))
             })
             .unwrap();
         // TODO PRILLIIIIK
