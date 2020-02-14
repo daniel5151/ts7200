@@ -7,7 +7,7 @@ use termion::raw::IntoRawMode;
 struct CtrlC;
 
 fn spawn_reader_thread(tx: mpsc::Sender<u8>, ctrl_c_exit: mpsc::Sender<CtrlC>) -> JoinHandle<()> {
-    thread::spawn(move || {
+    let thread = move || {
         for b in io::stdin().bytes() {
             let b = b.unwrap();
             if b == 3 {
@@ -26,14 +26,19 @@ fn spawn_reader_thread(tx: mpsc::Sender<u8>, ctrl_c_exit: mpsc::Sender<CtrlC>) -
                 Err(mpsc::SendError(_)) => return,
             }
         }
-    })
+    };
+
+    thread::Builder::new()
+        .name("stdio reader".to_string())
+        .spawn(thread)
+        .unwrap()
 }
 
 fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<CtrlC>) {
     let (ctrl_c_exit_tx, ctrl_c_exit_rx) = mpsc::bounded::<CtrlC>(1);
     let (ready_tx, ready_rx) = mpsc::unbounded::<()>();
 
-    let handle = thread::spawn(move || {
+    let thread = move || {
         let mut stdout = io::stdout();
 
         let raw_mode_handle = if termion::is_tty(&stdout) {
@@ -71,7 +76,12 @@ fn spawn_writer_thread(rx: mpsc::Receiver<u8>) -> (JoinHandle<()>, mpsc::Sender<
         if let Some(handle) = raw_mode_handle {
             handle.suspend_raw_mode().unwrap();
         }
-    });
+    };
+
+    let handle = thread::Builder::new()
+        .name("stdio writer".to_string())
+        .spawn(thread)
+        .unwrap();
 
     ready_rx.recv().unwrap();
 

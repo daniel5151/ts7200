@@ -35,11 +35,12 @@ enum InterrupterMsg {
 }
 
 fn spawn_interrupter_thread(
+    label: &'static str,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
 ) -> (JoinHandle<()>, mpsc::Sender<InterrupterMsg>) {
     let (tx, rx) = mpsc::unbounded::<InterrupterMsg>();
-    let handle = thread::spawn(move || {
+    let thread = move || {
         let mut next: Option<Instant> = None;
         let mut period = Default::default();
         loop {
@@ -71,7 +72,13 @@ fn spawn_interrupter_thread(
                 }
             }
         }
-    });
+    };
+
+    let handle = thread::Builder::new()
+        .name(format!("{} | Timer Interrupter", label))
+        .spawn(thread)
+        .unwrap();
+
     (handle, tx)
 }
 
@@ -107,7 +114,7 @@ impl Timer {
         interrupt: Interrupt,
         bits: usize,
     ) -> Timer {
-        let (_, interrupter_tx) = spawn_interrupter_thread(interrupt_bus.clone(), interrupt);
+        let (_, interrupter_tx) = spawn_interrupter_thread(label, interrupt_bus.clone(), interrupt);
         Timer {
             label,
             loadval: None,

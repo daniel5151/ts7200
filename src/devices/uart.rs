@@ -138,12 +138,13 @@ impl Status {
 struct Exit;
 
 fn spawn_reader_thread(
+    label: &'static str,
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 ) -> (JoinHandle<()>, mpsc::Sender<Exit>, mpsc::Sender<u8>) {
     let (tx, rx) = mpsc::unbounded();
     let (exit_tx, exit_rx) = mpsc::bounded(1);
-    let handle = thread::spawn(move || loop {
+    let thread = move || loop {
         let (can_timeout, bittime, word_len) = {
             let status = status.lock().unwrap();
             (
@@ -192,11 +193,18 @@ fn spawn_reader_thread(
                 status.update_interrupts(&interrupt_bus);
             }
         }
-    });
+    };
+
+    let handle = thread::Builder::new()
+        .name(format!("{} | UART Internal Reader", label))
+        .spawn(thread)
+        .unwrap();
+
     (handle, exit_tx, tx)
 }
 
 fn spawn_writer_thread(
+    label: &'static str,
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 ) -> (
@@ -208,7 +216,7 @@ fn spawn_writer_thread(
     let (outer_tx, outer_rx) = mpsc::unbounded();
     let (inner_tx, inner_rx) = mpsc::unbounded();
     let (exit_tx, exit_rx) = mpsc::bounded(1);
-    let handle = thread::spawn(move || {
+    let thread = move || {
         loop {
             let b = select! {
                 recv(inner_rx) -> b => match b {
@@ -251,7 +259,13 @@ fn spawn_writer_thread(
         for b in inner_rx.try_iter() {
             outer_tx.send(b).expect("io receiver closed unexpectedly")
         }
-    });
+    };
+
+    let handle = thread::Builder::new()
+        .name(format!("{} | UART Internal Writer", label))
+        .spawn(thread)
+        .unwrap();
+
     (handle, exit_tx, outer_rx, inner_tx)
 }
 
@@ -320,13 +334,14 @@ impl Drop for UartWorker {
 
 impl UartWorker {
     fn new(
+        label: &'static str,
         status: Arc<Mutex<Status>>,
         interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
     ) -> UartWorker {
         let (reader_handle, reader_exit, uart_input_chan) =
-            spawn_reader_thread(status.clone(), interrupt_bus.clone());
+            spawn_reader_thread(label, status.clone(), interrupt_bus.clone());
         let (writer_handle, writer_exit, uart_output_chan, device_output_chan) =
-            spawn_writer_thread(status, interrupt_bus);
+            spawn_writer_thread(label, status, interrupt_bus);
 
         UartWorker {
             reader_exit,
@@ -370,7 +385,7 @@ impl Uart {
     ) -> Uart {
         let status = Arc::new(Mutex::new(Status::new_hle(index)));
 
-        let worker = UartWorker::new(status.clone(), interrupt_bus.clone());
+        let worker = UartWorker::new(label, status.clone(), interrupt_bus.clone());
 
         Uart {
             label,
