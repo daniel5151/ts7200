@@ -255,6 +255,26 @@ fn spawn_writer_thread(
     (handle, exit_tx, outer_rx, inner_tx)
 }
 
+/// Newtype around `JoinHandle<()>`. Constructed via `.into()`
+#[derive(Debug)]
+pub struct UserReader(JoinHandle<()>);
+
+impl From<JoinHandle<()>> for UserReader {
+    fn from(handle: JoinHandle<()>) -> UserReader {
+        UserReader(handle)
+    }
+}
+
+/// Newtype around `JoinHandle<()>`. Constructed via `.into()`
+#[derive(Debug)]
+pub struct UserWriter(JoinHandle<()>);
+
+impl From<JoinHandle<()>> for UserWriter {
+    fn from(handle: JoinHandle<()>) -> UserWriter {
+        UserWriter(handle)
+    }
+}
+
 #[derive(Debug)]
 struct UartWorker {
     reader_exit: mpsc::Sender<Exit>,
@@ -266,24 +286,35 @@ struct UartWorker {
     uart_input_chan: mpsc::Sender<u8>,
     uart_output_chan: mpsc::Receiver<u8>,
     device_output_chan: mpsc::Sender<u8>,
+
+    user_reader_handler: Option<UserReader>,
+    user_writer_handler: Option<UserWriter>,
 }
 
 impl Drop for UartWorker {
     fn drop(&mut self) {
-        let reader_handle = self.reader_handle.take().unwrap();
-        let writer_handle = self.writer_handle.take().unwrap();
         self.reader_exit
             .send(Exit)
             .expect("uart worker reader thread was unexpectedly terminated");
         self.writer_exit
             .send(Exit)
             .expect("uart worker writer thread was unexpectedly terminated");
-        reader_handle
-            .join()
-            .expect("uart worker reader thread failed to join");
-        writer_handle
-            .join()
-            .expect("uart worker writer thread failed to join");
+
+        self.reader_handle.take().unwrap().join().unwrap();
+        self.writer_handle.take().unwrap().join().unwrap();
+
+        // HACK: don't actually join on the user_reader_thread
+        // reader threads are typically blocked on IO, and don't have an easy way to
+        // check if the other end of their send channel has closed.
+        // TODO: provide a mechanism to cleanly close UserReader tasks
+
+        // if let Some(user_reader_handler) = self.user_reader_handler.take() {
+        //     user_reader_handler.0.join().unwrap();
+        // }
+
+        if let Some(user_writer_handler) = self.user_writer_handler.take() {
+            user_writer_handler.0.join().unwrap();
+        };
     }
 }
 
@@ -305,43 +336,9 @@ impl UartWorker {
             uart_input_chan,
             uart_output_chan,
             device_output_chan,
+            user_reader_handler: None,
+            user_writer_handler: None,
         }
-    }
-
-    fn uart_input_chan(&self) -> &mpsc::Sender<u8> {
-        &self.uart_input_chan
-    }
-
-    fn uart_output_chan(&self) -> &mpsc::Receiver<u8> {
-        &self.uart_output_chan
-    }
-
-    fn device_output_chan(&self) -> &mpsc::Sender<u8> {
-        &self.device_output_chan
-    }
-
-    // fn device_input_chan(&self) -> &mpsc::Receiver<u8> {
-    //     unimplemented!()
-    // }
-}
-
-/// Newtype wrapper around JoinHandle<()>
-#[derive(Debug)]
-pub struct InputHandler(pub JoinHandle<()>);
-
-impl From<JoinHandle<()>> for InputHandler {
-    fn from(handle: JoinHandle<()>) -> InputHandler {
-        InputHandler(handle)
-    }
-}
-
-/// Newtype wrapper around JoinHandle<()>
-#[derive(Debug)]
-pub struct OutputHandler(pub JoinHandle<()>);
-
-impl From<JoinHandle<()>> for OutputHandler {
-    fn from(handle: JoinHandle<()>) -> OutputHandler {
-        OutputHandler(handle)
     }
 }
 
@@ -358,25 +355,10 @@ pub struct Uart {
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 
     worker: UartWorker,
-    input_thread_handle: Option<InputHandler>,
-    output_thread_handle: Option<OutputHandler>,
 }
 
 impl Drop for Uart {
-    fn drop(&mut self) {
-        if let Some(input_thread_handle) = self.input_thread_handle.take() {
-            input_thread_handle
-                .0
-                .join()
-                .expect("uart input thread failed to join");
-        }
-        if let Some(output_thread_handle) = self.output_thread_handle.take() {
-            output_thread_handle
-                .0
-                .join()
-                .expect("uart output thread failed to join");
-        };
-    }
+    fn drop(&mut self) {}
 }
 
 impl Uart {
@@ -395,8 +377,6 @@ impl Uart {
             status,
             interrupt_bus,
             worker,
-            input_thread_handle: None,
-            output_thread_handle: None,
         }
     }
 
@@ -405,16 +385,15 @@ impl Uart {
     /// The provided thread SHOULD send data to UART via the provided Sender
     /// channel, and MUST terminate if the Sender hangs up.
     ///
-    /// Returns the InputHandler of any previous thread that was registered with
+    /// Returns the UserReader of any previous thread that was registered with
     /// the UART.
-    pub fn install_input_handler<E>(
+    pub fn install_reader<E>(
         &mut self,
-        install_input_handler: impl FnOnce(mpsc::Sender<u8>) -> Result<InputHandler, E>,
-    ) -> Result<Option<InputHandler>, E> {
-        let ret = self.input_thread_handle.take();
-        self.input_thread_handle = Some(install_input_handler(
-            self.worker.uart_input_chan().clone(),
-        )?);
+        install_reader: impl FnOnce(mpsc::Sender<u8>) -> Result<UserReader, E>,
+    ) -> Result<Option<UserReader>, E> {
+        let ret = self.worker.user_reader_handler.take();
+        self.worker.user_reader_handler =
+            Some(install_reader(self.worker.uart_input_chan.clone())?);
         Ok(ret)
     }
 
@@ -423,16 +402,15 @@ impl Uart {
     /// The provided thread SHOULD receive data to UART via the provided
     /// Receiver channel, and MUST terminate if the Receiver hangs up.
     ///
-    /// Returns the OutputHandler of any previous thread that was registered
+    /// Returns the UserWriter of any previous thread that was registered
     /// with the UART.
-    pub fn install_output_handler<E>(
+    pub fn install_writer<E>(
         &mut self,
-        install_output_handler: impl FnOnce(mpsc::Receiver<u8>) -> Result<OutputHandler, E>,
-    ) -> Result<Option<OutputHandler>, E> {
-        let ret = self.output_thread_handle.take();
-        self.output_thread_handle = Some(install_output_handler(
-            self.worker.uart_output_chan().clone(),
-        )?);
+        install_writer: impl FnOnce(mpsc::Receiver<u8>) -> Result<UserWriter, E>,
+    ) -> Result<Option<UserWriter>, E> {
+        let ret = self.worker.user_writer_handler.take();
+        self.worker.user_writer_handler =
+            Some(install_writer(self.worker.uart_output_chan.clone())?);
         Ok(ret)
     }
 
@@ -442,25 +420,25 @@ impl Uart {
     /// provided Sender/Receiver channels, and MUST terminate if the
     /// Sender/Receiver hang up.
     ///
-    /// Returns the InputHandler/OutputHandler of any previous threads that were
+    /// Returns the UserReader/UserWriter of any previous threads that were
     /// registered with the UART.
     pub fn install_io_handlers<E>(
         &mut self,
         install_io_handlers: impl FnOnce(
             mpsc::Sender<u8>,
             mpsc::Receiver<u8>,
-        ) -> Result<(InputHandler, OutputHandler), E>,
-    ) -> Result<(Option<InputHandler>, Option<OutputHandler>), E> {
+        ) -> Result<(UserReader, UserWriter), E>,
+    ) -> Result<(Option<UserReader>, Option<UserWriter>), E> {
         let ret = (
-            self.input_thread_handle.take(),
-            self.output_thread_handle.take(),
+            self.worker.user_reader_handler.take(),
+            self.worker.user_writer_handler.take(),
         );
         let (in_handle, out_handle) = install_io_handlers(
-            self.worker.uart_input_chan().clone(),
-            self.worker.uart_output_chan().clone(),
+            self.worker.uart_input_chan.clone(),
+            self.worker.uart_output_chan.clone(),
         )?;
-        self.input_thread_handle = Some(in_handle);
-        self.output_thread_handle = Some(out_handle);
+        self.worker.user_reader_handler = Some(in_handle);
+        self.worker.user_writer_handler = Some(out_handle);
         Ok(ret)
     }
 
@@ -550,7 +528,7 @@ impl Memory for Uart {
                     // otherwise it could lead to a race condition
                     // where the sender thread locks status before
                     // this thread does.
-                    self.worker.device_output_chan().send(val as u8).unwrap();
+                    self.worker.device_output_chan.send(val as u8).unwrap();
                     status.tx_buf_size += 1;
                     status.update_interrupts(&self.interrupt_bus);
                 } else {
