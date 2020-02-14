@@ -45,7 +45,8 @@ fn spawn_interrupter_thread(
         loop {
             let timeout = match next {
                 Some(next) => next.saturating_duration_since(Instant::now()),
-                None => Duration::from_secs(std::u64::MAX / 8),
+                // XXX: Not technically correct, but this is a long enough time
+                None => Duration::from_secs(std::u32::MAX as _),
             };
 
             match rx.recv_timeout(timeout) {
