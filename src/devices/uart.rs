@@ -376,7 +376,6 @@ impl Drop for Uart {
                 .join()
                 .expect("uart output thread failed to join");
         };
-        eprintln!("dropped {:?}", self.label());
     }
 }
 
