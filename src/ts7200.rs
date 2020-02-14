@@ -290,6 +290,39 @@ impl Target for Ts7200 {
         push_reg(&self.cpu.reg_get(bank, reg::CPSR).to_le_bytes());
     }
 
+    fn write_registers(&mut self, mut get_reg: impl FnMut() -> Option<u32>) {
+        let mut next = {
+            let mut idx: usize = 0;
+            move || {
+                idx += 1;
+                get_reg().ok_or(idx - 1)
+            }
+        };
+        let result: Result<(), usize> = (move || {
+            let bank = self.cpu.get_mode().reg_bank();
+            for i in 0..13 {
+                self.cpu.reg_set(bank, i, next()?);
+            }
+            self.cpu.reg_set(bank, reg::SP, next()?);
+            self.cpu.reg_set(bank, reg::LR, next()?);
+            self.cpu.reg_set(bank, reg::PC, next()?);
+            // Floating point registers, unused
+            for _ in 0..25 {
+                next()?;
+            }
+
+            self.cpu.reg_set(bank, reg::CPSR, next()?);
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {}
+            Err(idx) => warn!(
+                "Only {} registers specified for write_registers command",
+                idx
+            ),
+        }
+    }
+
     fn read_pc(&mut self) -> u32 {
         self.cpu.reg_get(self.cpu.get_mode().reg_bank(), reg::PC)
     }
