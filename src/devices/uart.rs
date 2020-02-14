@@ -256,9 +256,93 @@ fn spawn_writer_thread(
 }
 
 #[derive(Debug)]
-enum IoState {
-    Uninstalled(mpsc::Sender<u8>, mpsc::Receiver<u8>),
-    Installed(Option<JoinHandle<()>>, Option<JoinHandle<()>>),
+struct UartWorker {
+    reader_exit: mpsc::Sender<Exit>,
+    writer_exit: mpsc::Sender<Exit>,
+    // must be optional, as `.join()` can only be called on an owned JoinHandle
+    reader_handle: Option<JoinHandle<()>>,
+    writer_handle: Option<JoinHandle<()>>,
+
+    uart_input_chan: mpsc::Sender<u8>,
+    uart_output_chan: mpsc::Receiver<u8>,
+    device_output_chan: mpsc::Sender<u8>,
+}
+
+impl Drop for UartWorker {
+    fn drop(&mut self) {
+        let reader_handle = self.reader_handle.take().unwrap();
+        let writer_handle = self.writer_handle.take().unwrap();
+        self.reader_exit
+            .send(Exit)
+            .expect("uart worker reader thread was unexpectedly terminated");
+        self.writer_exit
+            .send(Exit)
+            .expect("uart worker writer thread was unexpectedly terminated");
+        reader_handle
+            .join()
+            .expect("uart worker reader thread failed to join");
+        writer_handle
+            .join()
+            .expect("uart worker writer thread failed to join");
+    }
+}
+
+impl UartWorker {
+    fn new(
+        status: Arc<Mutex<Status>>,
+        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    ) -> UartWorker {
+        let (reader_handle, reader_exit, uart_input_chan) =
+            spawn_reader_thread(status.clone(), interrupt_bus.clone());
+        let (writer_handle, writer_exit, uart_output_chan, device_output_chan) =
+            spawn_writer_thread(status, interrupt_bus);
+
+        UartWorker {
+            reader_exit,
+            writer_exit,
+            reader_handle: Some(reader_handle),
+            writer_handle: Some(writer_handle),
+            uart_input_chan,
+            uart_output_chan,
+            device_output_chan,
+        }
+    }
+
+    fn uart_input_chan(&self) -> &mpsc::Sender<u8> {
+        &self.uart_input_chan
+    }
+
+    fn uart_output_chan(&self) -> &mpsc::Receiver<u8> {
+        &self.uart_output_chan
+    }
+
+    fn device_output_chan(&self) -> &mpsc::Sender<u8> {
+        &self.device_output_chan
+    }
+
+    // fn device_input_chan(&self) -> &mpsc::Receiver<u8> {
+    //     unimplemented!()
+    // }
+}
+
+/// Newtype wrapper around JoinHandle<()>
+#[derive(Debug)]
+pub struct InputHandler(pub JoinHandle<()>);
+
+impl From<JoinHandle<()>> for InputHandler {
+    fn from(handle: JoinHandle<()>) -> InputHandler {
+        InputHandler(handle)
+    }
+}
+
+/// Newtype wrapper around JoinHandle<()>
+#[derive(Debug)]
+pub struct OutputHandler(pub JoinHandle<()>);
+
+impl From<JoinHandle<()>> for OutputHandler {
+    fn from(handle: JoinHandle<()>) -> OutputHandler {
+        OutputHandler(handle)
+    }
 }
 
 /// UART device implementing all behavior shared by UARTs 1, 2, and 3 on the
@@ -271,15 +355,29 @@ pub struct Uart {
     label: &'static str,
 
     status: Arc<Mutex<Status>>,
-
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 
-    reader: Option<(mpsc::Sender<Exit>, JoinHandle<()>)>,
-    writer: Option<(mpsc::Sender<Exit>, JoinHandle<()>)>,
+    worker: UartWorker,
+    input_thread_handle: Option<InputHandler>,
+    output_thread_handle: Option<OutputHandler>,
+}
 
-    io: Option<IoState>,
-
-    sender_tx: mpsc::Sender<u8>,
+impl Drop for Uart {
+    fn drop(&mut self) {
+        if let Some(input_thread_handle) = self.input_thread_handle.take() {
+            input_thread_handle
+                .0
+                .join()
+                .expect("uart input thread failed to join");
+        }
+        if let Some(output_thread_handle) = self.output_thread_handle.take() {
+            output_thread_handle
+                .0
+                .join()
+                .expect("uart output thread failed to join");
+        };
+        eprintln!("dropped {:?}", self.label());
+    }
 }
 
 impl Uart {
@@ -291,69 +389,84 @@ impl Uart {
     ) -> Uart {
         let status = Arc::new(Mutex::new(Status::new_hle(index)));
 
-        let (reader_handle, reader_exit, input) =
-            spawn_reader_thread(status.clone(), interrupt_bus.clone());
-        let (writer_handle, writer_exit, output, sender_tx) =
-            spawn_writer_thread(status.clone(), interrupt_bus.clone());
+        let worker = UartWorker::new(status.clone(), interrupt_bus.clone());
 
         Uart {
             label,
             status,
             interrupt_bus,
-            reader: Some((reader_exit, reader_handle)),
-            writer: Some((writer_exit, writer_handle)),
-            io: Some(IoState::Uninstalled(input, output)),
-            sender_tx,
+            worker,
+            input_thread_handle: None,
+            output_thread_handle: None,
         }
     }
 
-    /// Install the io channels for this UART
-    // TODO: PRILLIIIIIIIKKKKKKKKKKKKK THIS LANGUAGE IS TRASH
-    pub fn install_io(
+    /// Register an input handler thread with the UART.
+    ///
+    /// The provided thread SHOULD send data to UART via the provided Sender
+    /// channel, and MUST terminate if the Sender hangs up.
+    ///
+    /// Returns the InputHandler of any previous thread that was registered with
+    /// the UART.
+    pub fn install_input_handler<E>(
         &mut self,
-        install_io: impl FnOnce(
+        install_input_handler: impl FnOnce(mpsc::Sender<u8>) -> Result<InputHandler, E>,
+    ) -> Result<Option<InputHandler>, E> {
+        let ret = self.input_thread_handle.take();
+        self.input_thread_handle = Some(install_input_handler(
+            self.worker.uart_input_chan().clone(),
+        )?);
+        Ok(ret)
+    }
+
+    /// Register an output handler thread with the UART.
+    ///
+    /// The provided thread SHOULD receive data to UART via the provided
+    /// Receiver channel, and MUST terminate if the Receiver hangs up.
+    ///
+    /// Returns the OutputHandler of any previous thread that was registered
+    /// with the UART.
+    pub fn install_output_handler<E>(
+        &mut self,
+        install_output_handler: impl FnOnce(mpsc::Receiver<u8>) -> Result<OutputHandler, E>,
+    ) -> Result<Option<OutputHandler>, E> {
+        let ret = self.output_thread_handle.take();
+        self.output_thread_handle = Some(install_output_handler(
+            self.worker.uart_output_chan().clone(),
+        )?);
+        Ok(ret)
+    }
+
+    /// Register a pair of Input and Output handler threads with the UART.
+    ///
+    /// The provided threads SHOULD send/receiver data to/from UART via the
+    /// provided Sender/Receiver channels, and MUST terminate if the
+    /// Sender/Receiver hang up.
+    ///
+    /// Returns the InputHandler/OutputHandler of any previous threads that were
+    /// registered with the UART.
+    pub fn install_io_handlers<E>(
+        &mut self,
+        install_io_handlers: impl FnOnce(
             mpsc::Sender<u8>,
             mpsc::Receiver<u8>,
-        ) -> Result<(Option<JoinHandle<()>>, Option<JoinHandle<()>>), ()>,
-    ) -> Result<(), ()> {
-        match self.io.take().expect("No io state") {
-            IoState::Uninstalled(tx, rx) => {
-                let (h1, h2) = install_io(tx, rx)?;
-                self.io = Some(IoState::Installed(h1, h2));
-                Ok(())
-            }
-            IoState::Installed(h1, h2) => {
-                self.io = Some(IoState::Installed(h1, h2));
-                Err(())
-            } // XXX: Better error type
-        }
+        ) -> Result<(InputHandler, OutputHandler), E>,
+    ) -> Result<(Option<InputHandler>, Option<OutputHandler>), E> {
+        let ret = (
+            self.input_thread_handle.take(),
+            self.output_thread_handle.take(),
+        );
+        let (in_handle, out_handle) = install_io_handlers(
+            self.worker.uart_input_chan().clone(),
+            self.worker.uart_output_chan().clone(),
+        )?;
+        self.input_thread_handle = Some(in_handle);
+        self.output_thread_handle = Some(out_handle);
+        Ok(ret)
     }
 
     fn lock_status(&mut self) -> MutexGuard<Status> {
         self.status.lock().unwrap()
-    }
-}
-
-impl Drop for Uart {
-    fn drop(&mut self) {
-        let (reader_exit, reader_handle) = self.reader.take().expect("reader already taken");
-        let (writer_exit, writer_handle) = self.writer.take().expect("writer already taken");
-        reader_exit.send(Exit).unwrap();
-        writer_exit.send(Exit).unwrap();
-        reader_handle.join().expect("reader failed to join");
-        writer_handle.join().expect("writer failed to join");
-
-        match self.io.take().expect("No io state") {
-            IoState::Uninstalled(_, _) => {}
-            IoState::Installed(h1, h2) => {
-                if let Some(h1) = h1 {
-                    h1.join().expect("h1 failed to join");
-                }
-                if let Some(h2) = h2 {
-                    h2.join().expect("h2 failed to join");
-                };
-            }
-        }
     }
 }
 
@@ -438,7 +551,7 @@ impl Memory for Uart {
                     // otherwise it could lead to a race condition
                     // where the sender thread locks status before
                     // this thread does.
-                    self.sender_tx.send(val as u8).unwrap();
+                    self.worker.device_output_chan().send(val as u8).unwrap();
                     status.tx_buf_size += 1;
                     status.update_interrupts(&self.interrupt_bus);
                 } else {

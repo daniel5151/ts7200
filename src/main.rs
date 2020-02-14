@@ -51,34 +51,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let in_path = check_shortcut(in_path);
             let out_path = check_shortcut(out_path);
-            let uart1 = &mut system.devices_mut().uart1;
 
-            uart1
-                .install_io(|tx, rx| {
-                    let _ = crate::io::file::spawn_reader_thread(in_path, tx)?;
-                    let writer = crate::io::file::spawn_writer_thread(out_path, rx)?;
-                    Ok((None, Some(writer)))
-                })
-                .unwrap();
-            // TODO PRILLIIIIK
+            let uart1 = &mut system.devices_mut().uart1;
+            uart1.install_input_handler(|tx| {
+                crate::io::file::spawn_reader_thread(in_path, tx).map(Into::into)
+            })?;
+            uart1.install_output_handler(|rx| {
+                crate::io::file::spawn_writer_thread(out_path, rx).map(Into::into)
+            })?;
         }
         (_, _) => {}
     }
 
     // uart2 is for console communication
-    // Unused variable here to ensure this doesn't get dropped until
-    // we exit.
-    {
-        let uart2 = &mut system.devices_mut().uart2;
+    // stdio has a non-trivial drop implementation (i.e: exit raw mode)
+    let mut stdio = None;
 
-        uart2
-            .install_io(|rx, tx| {
-                let (_, writer) = crate::io::stdio::spawn_threads(rx, tx);
-                Ok((None, Some(writer)))
-            })
-            .unwrap();
-        // TODO PRILLIIIIK
-    };
+    system
+        .devices_mut()
+        .uart2
+        .install_io_handlers(|tx, rx| {
+            let mut stdio_ = crate::io::stdio::Stdio::new(tx, rx);
+            let ret = (
+                stdio_.take_reader_thread().unwrap().into(),
+                stdio_.take_writer_thread().unwrap().into(),
+            );
+            stdio = Some(stdio_);
+            Ok(ret)
+        })
+        .map_err(|_: ()| "could not connect stdio to UART2")?;
 
     let debugger = match args.get(4) {
         Some(port) => Some(new_tcp_gdbstub(
