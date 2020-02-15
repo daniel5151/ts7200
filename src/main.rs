@@ -11,6 +11,7 @@ pub mod ts7200;
 
 use std::net::{TcpListener, TcpStream};
 
+use devices::uart;
 use ts7200::Ts7200;
 
 use log::*;
@@ -53,11 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let out_path = check_shortcut(out_path);
 
             let uart1 = &mut system.devices_mut().uart1;
-            uart1.install_reader(|tx| {
-                crate::io::file::spawn_reader_thread(in_path, tx).map(Into::into)
+            uart1.install_reader_task(|tx| {
+                crate::io::file::spawn_reader_thread(in_path, tx).map(uart::ReaderTask::new)
             })?;
-            uart1.install_writer(|rx| {
-                crate::io::file::spawn_writer_thread(out_path, rx).map(Into::into)
+            uart1.install_writer_task(|rx| {
+                crate::io::file::spawn_writer_thread(out_path, rx).map(uart::WriterTask::new)
             })?;
         }
         (_, _) => {}
@@ -67,9 +68,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     system
         .devices_mut()
         .uart2
-        .install_io_handlers(|tx, rx| {
+        .install_io_tasks(|tx, rx| {
             let (in_thread, out_thread) = crate::io::stdio::spawn_threads(tx, rx);
-            Ok((in_thread.into(), out_thread.into()))
+            Ok((
+                uart::ReaderTask::new(in_thread),
+                uart::WriterTask::new(out_thread),
+            ))
         })
         .map_err(|_: ()| "could not connect stdio to UART2")?;
 

@@ -298,28 +298,34 @@ fn spawn_output_buffer_thread(
     )
 }
 
-/// Newtype around `JoinHandle<()>`. Constructed via `.into()`
+/// User-provided task for providing input into a UART
 #[derive(Debug)]
-pub struct UserReader(JoinHandle<()>);
+pub struct ReaderTask {
+    handle: JoinHandle<()>,
+}
 
-impl From<JoinHandle<()>> for UserReader {
-    fn from(handle: JoinHandle<()>) -> UserReader {
-        UserReader(handle)
+impl ReaderTask {
+    /// Create a new ReaderTask
+    pub fn new(handle: JoinHandle<()>) -> ReaderTask {
+        ReaderTask { handle }
     }
 }
 
-/// Newtype around `JoinHandle<()>`. Constructed via `.into()`
+/// User-provided task for providing input into a UART
 #[derive(Debug)]
-pub struct UserWriter(JoinHandle<()>);
+pub struct WriterTask {
+    handle: JoinHandle<()>,
+}
 
-impl From<JoinHandle<()>> for UserWriter {
-    fn from(handle: JoinHandle<()>) -> UserWriter {
-        UserWriter(handle)
+impl WriterTask {
+    /// Create a new WriterTask
+    pub fn new(handle: JoinHandle<()>) -> WriterTask {
+        WriterTask { handle }
     }
 }
 
 /// Owner of the UART's internal Input buffer and Output buffer threads, their
-/// associated channels, and any User provided Reader/Writer handlers.
+/// associated channels, and any User provided Reader/Writer tasks.
 ///
 /// When dropped, the UartWorker ensures that the UART's internal buffer threads
 /// are terminated _before_ waiting for any user provided Reader/Writer threads
@@ -336,8 +342,8 @@ struct UartWorker {
     uart_output_chan: mpsc::Receiver<u8>,
     device_output_chan: mpsc::Sender<u8>,
 
-    user_reader_handler: Option<UserReader>,
-    user_writer_handler: Option<UserWriter>,
+    user_reader_task: Option<ReaderTask>,
+    user_writer_task: Option<WriterTask>,
 }
 
 impl Drop for UartWorker {
@@ -355,14 +361,14 @@ impl Drop for UartWorker {
         // HACK: don't actually join on the user_reader_thread
         // reader threads are typically blocked on IO, and don't have an easy way to
         // check if the other end of their send channel has closed.
-        // TODO: provide a mechanism to cleanly close UserReader tasks
+        // TODO: provide a mechanism to cleanly close ReaderTask tasks
 
-        // if let Some(user_reader_handler) = self.user_reader_handler.take() {
-        //     user_reader_handler.0.join().unwrap();
+        // if let Some(user_reader_task) = self.user_reader_task.take() {
+        //     user_reader_task.0.join().unwrap();
         // }
 
-        if let Some(user_writer_handler) = self.user_writer_handler.take() {
-            user_writer_handler.0.join().unwrap();
+        if let Some(user_writer_task) = self.user_writer_task.take() {
+            user_writer_task.handle.join().unwrap();
         };
     }
 }
@@ -386,8 +392,8 @@ impl UartWorker {
             uart_input_chan: input_chans.uart_input,
             uart_output_chan: output_chans.uart_output,
             device_output_chan: output_chans.device_output,
-            user_reader_handler: None,
-            user_writer_handler: None,
+            user_reader_task: None,
+            user_writer_task: None,
         }
     }
 }
@@ -405,10 +411,6 @@ pub struct Uart {
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 
     worker: UartWorker,
-}
-
-impl Drop for Uart {
-    fn drop(&mut self) {}
 }
 
 impl Uart {
@@ -430,70 +432,70 @@ impl Uart {
         }
     }
 
-    /// Register an input handler thread with the UART.
+    fn lock_status(&mut self) -> MutexGuard<Status> {
+        self.status.lock().unwrap()
+    }
+
+    /// Register an input handler task with the UART.
     ///
-    /// The provided thread SHOULD send data to UART via the provided Sender
+    /// The provided task SHOULD send data to UART via the provided Sender
     /// channel, and MUST terminate if the Sender hangs up.
     ///
-    /// Returns the UserReader of any previous thread that was registered with
+    /// Returns the ReaderTask of any previous task that was registered with
     /// the UART.
-    pub fn install_reader<E>(
+    pub fn install_reader_task<E>(
         &mut self,
-        install_reader: impl FnOnce(mpsc::Sender<u8>) -> Result<UserReader, E>,
-    ) -> Result<Option<UserReader>, E> {
-        let ret = self.worker.user_reader_handler.take();
-        self.worker.user_reader_handler =
-            Some(install_reader(self.worker.uart_input_chan.clone())?);
+        install_reader_task: impl FnOnce(mpsc::Sender<u8>) -> Result<ReaderTask, E>,
+    ) -> Result<Option<ReaderTask>, E> {
+        let ret = self.worker.user_reader_task.take();
+        self.worker.user_reader_task =
+            Some(install_reader_task(self.worker.uart_input_chan.clone())?);
         Ok(ret)
     }
 
-    /// Register an output handler thread with the UART.
+    /// Register an output handler task with the UART.
     ///
-    /// The provided thread SHOULD receive data to UART via the provided
-    /// Receiver channel, and MUST terminate if the Receiver hangs up.
+    /// The provided task SHOULD receive data to UART via the provided Receiver
+    /// channel, and MUST terminate if the Receiver hangs up.
     ///
-    /// Returns the UserWriter of any previous thread that was registered
+    /// Returns the WriterTask of any previous task that was registered
     /// with the UART.
-    pub fn install_writer<E>(
+    pub fn install_writer_task<E>(
         &mut self,
-        install_writer: impl FnOnce(mpsc::Receiver<u8>) -> Result<UserWriter, E>,
-    ) -> Result<Option<UserWriter>, E> {
-        let ret = self.worker.user_writer_handler.take();
-        self.worker.user_writer_handler =
-            Some(install_writer(self.worker.uart_output_chan.clone())?);
+        install_writer_task: impl FnOnce(mpsc::Receiver<u8>) -> Result<WriterTask, E>,
+    ) -> Result<Option<WriterTask>, E> {
+        let ret = self.worker.user_writer_task.take();
+        self.worker.user_writer_task =
+            Some(install_writer_task(self.worker.uart_output_chan.clone())?);
         Ok(ret)
     }
 
-    /// Register a pair of Input and Output handler threads with the UART.
+    /// Register a pair of Input and Output tasks with the UART.
     ///
-    /// The provided threads SHOULD send/receiver data to/from UART via the
+    /// The provided tasks SHOULD send/receive data to/from UART via the
     /// provided Sender/Receiver channels, and MUST terminate if the
     /// Sender/Receiver hang up.
     ///
-    /// Returns the UserReader/UserWriter of any previous threads that were
-    /// registered with the UART.
-    pub fn install_io_handlers<E>(
+    /// Returns the ReaderTask/WriterTask of any previous tasks that may have
+    /// been registered with the UART.
+    pub fn install_io_tasks<E>(
         &mut self,
-        install_io_handlers: impl FnOnce(
+        install_io_tasks: impl FnOnce(
             mpsc::Sender<u8>,
             mpsc::Receiver<u8>,
-        ) -> Result<(UserReader, UserWriter), E>,
-    ) -> Result<(Option<UserReader>, Option<UserWriter>), E> {
+        ) -> Result<(ReaderTask, WriterTask), E>,
+    ) -> Result<(Option<ReaderTask>, Option<WriterTask>), E> {
         let ret = (
-            self.worker.user_reader_handler.take(),
-            self.worker.user_writer_handler.take(),
+            self.worker.user_reader_task.take(),
+            self.worker.user_writer_task.take(),
         );
-        let (in_handle, out_handle) = install_io_handlers(
+        let (in_handle, out_handle) = install_io_tasks(
             self.worker.uart_input_chan.clone(),
             self.worker.uart_output_chan.clone(),
         )?;
-        self.worker.user_reader_handler = Some(in_handle);
-        self.worker.user_writer_handler = Some(out_handle);
+        self.worker.user_reader_task = Some(in_handle);
+        self.worker.user_writer_task = Some(out_handle);
         Ok(ret)
-    }
-
-    fn lock_status(&mut self) -> MutexGuard<Status> {
-        self.status.lock().unwrap()
     }
 }
 
