@@ -143,12 +143,19 @@ impl Status {
 
 struct Exit;
 
-fn spawn_reader_thread(
+/// Structured return type for the various channels created as part of spawning
+/// a UART input buffer thread
+struct InputBufferThreadChans {
+    pub exit: mpsc::Sender<Exit>,
+    pub uart_input: mpsc::Sender<u8>,
+}
+
+fn spawn_input_buffer_thread(
     label: &'static str,
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
-) -> (JoinHandle<()>, mpsc::Sender<Exit>, mpsc::Sender<u8>) {
-    let (tx, rx) = mpsc::unbounded();
+) -> (JoinHandle<()>, InputBufferThreadChans) {
+    let (uart_tx, uart_rx) = mpsc::unbounded();
     let (exit_tx, exit_rx) = mpsc::bounded(1);
     let thread = move || loop {
         let (can_timeout, bittime, word_len) = {
@@ -161,18 +168,18 @@ fn spawn_reader_thread(
         };
         let b = if can_timeout {
             select! {
-                recv(rx) -> b => match b {
+                recv(uart_rx) -> b => match b {
                     Ok(b) => Some(b),
-                    Err(mpsc::RecvError) => panic!("rx closed unexpectedly"),
+                    Err(mpsc::RecvError) => panic!("uart_rx closed unexpectedly"),
                 },
                 recv(exit_rx) -> _ => break,
                 default(bittime * 32) => None,
             }
         } else {
             select! {
-                recv(rx) -> b => match b {
+                recv(uart_rx) -> b => match b {
                     Ok(b) => Some(b),
-                    Err(mpsc::RecvError) => panic!("rx closed unexpectedly"),
+                    Err(mpsc::RecvError) => panic!("uart_rx closed unexpectedly"),
                 },
                 recv(exit_rx) -> _ => break,
             }
@@ -206,26 +213,35 @@ fn spawn_reader_thread(
         .spawn(thread)
         .unwrap();
 
-    (handle, exit_tx, tx)
+    (
+        handle,
+        InputBufferThreadChans {
+            exit: exit_tx,
+            uart_input: uart_tx,
+        },
+    )
 }
 
-fn spawn_writer_thread(
+/// Structured return type for the various channels created as part of spawning
+/// a UART output buffer thread
+struct OutputBufferThreadChans {
+    pub exit: mpsc::Sender<Exit>,
+    pub uart_output: mpsc::Receiver<u8>,
+    pub device_output: mpsc::Sender<u8>,
+}
+
+fn spawn_output_buffer_thread(
     label: &'static str,
     status: Arc<Mutex<Status>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
-) -> (
-    JoinHandle<()>,
-    mpsc::Sender<Exit>,
-    mpsc::Receiver<u8>,
-    mpsc::Sender<u8>,
-) {
-    let (outer_tx, outer_rx) = mpsc::unbounded();
-    let (inner_tx, inner_rx) = mpsc::unbounded();
+) -> (JoinHandle<()>, OutputBufferThreadChans) {
+    let (uart_tx, uart_rx) = mpsc::unbounded();
+    let (device_tx, device_rx) = mpsc::unbounded();
     let (exit_tx, exit_rx) = mpsc::bounded(1);
     let thread = move || {
         loop {
             let b = select! {
-                recv(inner_rx) -> b => match b {
+                recv(device_rx) -> b => match b {
                     Ok(b) => b,
                     Err(mpsc::RecvError) => panic!("tx closed unexpectedly"),
                 },
@@ -244,7 +260,7 @@ fn spawn_writer_thread(
                 (status.bittime, status.word_len)
             };
             thread::sleep(bittime * word_len);
-            match outer_tx.send(b) {
+            match uart_tx.send(b) {
                 Ok(()) => (),
                 Err(mpsc::SendError(_)) => {
                     // Receiving end closed
@@ -262,8 +278,8 @@ fn spawn_writer_thread(
                 status.update_interrupts(&interrupt_bus);
             }
         }
-        for b in inner_rx.try_iter() {
-            outer_tx.send(b).expect("io receiver closed unexpectedly")
+        for b in device_rx.try_iter() {
+            uart_tx.send(b).expect("io receiver closed unexpectedly")
         }
     };
 
@@ -272,7 +288,14 @@ fn spawn_writer_thread(
         .spawn(thread)
         .unwrap();
 
-    (handle, exit_tx, outer_rx, inner_tx)
+    (
+        handle,
+        OutputBufferThreadChans {
+            exit: exit_tx,
+            uart_output: uart_rx,
+            device_output: device_tx,
+        },
+    )
 }
 
 /// Newtype around `JoinHandle<()>`. Constructed via `.into()`
@@ -295,13 +318,19 @@ impl From<JoinHandle<()>> for UserWriter {
     }
 }
 
+/// Owner of the UART's internal Input buffer and Output buffer threads, their
+/// associated channels, and any User provided Reader/Writer handlers.
+///
+/// When dropped, the UartWorker ensures that the UART's internal buffer threads
+/// are terminated _before_ waiting for any user provided Reader/Writer threads
+/// to terminate.
 #[derive(Debug)]
 struct UartWorker {
-    reader_exit: mpsc::Sender<Exit>,
-    writer_exit: mpsc::Sender<Exit>,
+    input_buffer_thread_exit: mpsc::Sender<Exit>,
+    output_buffer_thread_exit: mpsc::Sender<Exit>,
     // must be optional, as `.join()` can only be called on an owned JoinHandle
-    reader_handle: Option<JoinHandle<()>>,
-    writer_handle: Option<JoinHandle<()>>,
+    input_buffer_thread: Option<JoinHandle<()>>,
+    output_buffer_thread: Option<JoinHandle<()>>,
 
     uart_input_chan: mpsc::Sender<u8>,
     uart_output_chan: mpsc::Receiver<u8>,
@@ -313,15 +342,15 @@ struct UartWorker {
 
 impl Drop for UartWorker {
     fn drop(&mut self) {
-        self.reader_exit
+        self.input_buffer_thread_exit
             .send(Exit)
             .expect("uart worker reader thread was unexpectedly terminated");
-        self.writer_exit
+        self.output_buffer_thread_exit
             .send(Exit)
             .expect("uart worker writer thread was unexpectedly terminated");
 
-        self.reader_handle.take().unwrap().join().unwrap();
-        self.writer_handle.take().unwrap().join().unwrap();
+        self.input_buffer_thread.take().unwrap().join().unwrap();
+        self.output_buffer_thread.take().unwrap().join().unwrap();
 
         // HACK: don't actually join on the user_reader_thread
         // reader threads are typically blocked on IO, and don't have an easy way to
@@ -344,19 +373,19 @@ impl UartWorker {
         status: Arc<Mutex<Status>>,
         interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
     ) -> UartWorker {
-        let (reader_handle, reader_exit, uart_input_chan) =
-            spawn_reader_thread(label, status.clone(), interrupt_bus.clone());
-        let (writer_handle, writer_exit, uart_output_chan, device_output_chan) =
-            spawn_writer_thread(label, status, interrupt_bus);
+        let (input_buffer_thread, input_chans) =
+            spawn_input_buffer_thread(label, status.clone(), interrupt_bus.clone());
+        let (output_buffer_thread, output_chans) =
+            spawn_output_buffer_thread(label, status, interrupt_bus);
 
         UartWorker {
-            reader_exit,
-            writer_exit,
-            reader_handle: Some(reader_handle),
-            writer_handle: Some(writer_handle),
-            uart_input_chan,
-            uart_output_chan,
-            device_output_chan,
+            input_buffer_thread_exit: input_chans.exit,
+            output_buffer_thread_exit: output_chans.exit,
+            input_buffer_thread: Some(input_buffer_thread),
+            output_buffer_thread: Some(output_buffer_thread),
+            uart_input_chan: input_chans.uart_input,
+            uart_output_chan: output_chans.uart_output,
+            device_output_chan: output_chans.device_output,
             user_reader_handler: None,
             user_writer_handler: None,
         }
