@@ -127,19 +127,21 @@ impl Ts7200 {
     }
 
     fn check_exception(&mut self, blocking: CheckException) {
-        let (interrupt, state) = match blocking {
-            CheckException::Blocking => self.interrupt_bus.recv().unwrap(),
-            CheckException::NonBlocking => match self.interrupt_bus.try_recv() {
-                Ok(t) => t,
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => panic!(),
-            },
+        let iter: Box<dyn Iterator<Item = (Interrupt, bool)>> = match blocking {
+            CheckException::Blocking => Box::new(
+                std::iter::once(self.interrupt_bus.recv().unwrap())
+                    .chain(self.interrupt_bus.try_iter()),
+            ),
+
+            CheckException::NonBlocking => Box::new(self.interrupt_bus.try_iter()),
         };
 
-        if state {
-            self.devices.vicmgr.assert_interrupt(interrupt)
-        } else {
-            self.devices.vicmgr.clear_interrupt(interrupt)
+        for (interrupt, state) in iter {
+            if state {
+                self.devices.vicmgr.assert_interrupt(interrupt)
+            } else {
+                self.devices.vicmgr.clear_interrupt(interrupt)
+            }
         }
 
         if self.devices.vicmgr.fiq() {
