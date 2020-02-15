@@ -198,8 +198,10 @@ impl Memory for Timer {
                     | ((self.enabled as u32) << 7);
                 Ok(val)
             }
-            // TODO: implement timer interrupts
-            0x0C => crate::mem_unimpl!("CLR_REG"),
+            0x0C => {
+                // XXX: don't panic if writing to a read-only register
+                panic!("tried to write value to write-only Timer register");
+            }
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)
