@@ -14,8 +14,11 @@ use crate::memory::{MemResult, MemResultExt, Memory};
 // TODO: A better source for UARTCLK_HZ would be appreciated.
 const UARTCLK_HZ: u64 = 7_372_800;
 
+/// UART internal register state.
+///
+/// Shared between the UART device and it's workers using a Mutex
 #[derive(Debug, Default)]
-struct Status {
+struct State {
     index: u8,
 
     linctrl: [u32; 3],
@@ -37,7 +40,7 @@ struct Status {
     int_asserted: [bool; 3],
 }
 
-impl Status {
+impl State {
     fn new(index: u8) -> Self {
         let mut s: Self = Default::default();
         s.index = index;
@@ -152,18 +155,18 @@ struct InputBufferThreadChans {
 
 fn spawn_input_buffer_thread(
     label: &'static str,
-    status: Arc<Mutex<Status>>,
+    state: Arc<Mutex<State>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 ) -> (JoinHandle<()>, InputBufferThreadChans) {
     let (uart_tx, uart_rx) = mpsc::unbounded();
     let (exit_tx, exit_rx) = mpsc::bounded(1);
     let thread = move || loop {
         let (can_timeout, bittime, word_len) = {
-            let status = status.lock().unwrap();
+            let state = state.lock().unwrap();
             (
-                !status.rx_buf.is_empty() && !status.timeout,
-                status.bittime,
-                status.word_len,
+                !state.rx_buf.is_empty() && !state.timeout,
+                state.bittime,
+                state.word_len,
             )
         };
         let b = if can_timeout {
@@ -189,21 +192,21 @@ fn spawn_input_buffer_thread(
             Some(b) => {
                 thread::sleep(bittime * word_len);
 
-                let mut status = status.lock().unwrap();
-                if status.rx_buf.len() < status.fifo_size {
-                    status.rx_buf.push_back(b);
-                    status.update_interrupts(&interrupt_bus);
+                let mut state = state.lock().unwrap();
+                if state.rx_buf.len() < state.fifo_size {
+                    state.rx_buf.push_back(b);
+                    state.update_interrupts(&interrupt_bus);
                 } else {
                     warn!(
                         "UART{} dropping received byte due to full FIFO",
-                        status.index
+                        state.index
                     );
                 }
             }
             None => {
-                let mut status = status.lock().unwrap();
-                status.timeout = true;
-                status.update_interrupts(&interrupt_bus);
+                let mut state = state.lock().unwrap();
+                state.timeout = true;
+                state.update_interrupts(&interrupt_bus);
             }
         }
     };
@@ -232,7 +235,7 @@ struct OutputBufferThreadChans {
 
 fn spawn_output_buffer_thread(
     label: &'static str,
-    status: Arc<Mutex<Status>>,
+    state: Arc<Mutex<State>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
 ) -> (JoinHandle<()>, OutputBufferThreadChans) {
     let (uart_tx, uart_rx) = mpsc::unbounded();
@@ -250,14 +253,14 @@ fn spawn_output_buffer_thread(
 
             // Sleep for the appropriate time
             let (bittime, word_len) = {
-                let mut status = status.lock().unwrap();
-                if !status.busy {
-                    status.busy = true;
-                    status.cts_change = true;
-                    status.update_interrupts(&interrupt_bus);
+                let mut state = state.lock().unwrap();
+                if !state.busy {
+                    state.busy = true;
+                    state.cts_change = true;
+                    state.update_interrupts(&interrupt_bus);
                 }
 
-                (status.bittime, status.word_len)
+                (state.bittime, state.word_len)
             };
             thread::sleep(bittime * word_len);
             match uart_tx.send(b) {
@@ -268,14 +271,14 @@ fn spawn_output_buffer_thread(
                 }
             }
             {
-                let mut status = status.lock().unwrap();
+                let mut state = state.lock().unwrap();
 
-                status.tx_buf_size -= 1;
-                if status.tx_buf_size == 0 {
-                    status.busy = false;
-                    status.cts_change = true;
+                state.tx_buf_size -= 1;
+                if state.tx_buf_size == 0 {
+                    state.busy = false;
+                    state.cts_change = true;
                 }
-                status.update_interrupts(&interrupt_bus);
+                state.update_interrupts(&interrupt_bus);
             }
         }
         for b in device_rx.try_iter() {
@@ -376,13 +379,13 @@ impl Drop for UartWorker {
 impl UartWorker {
     fn new(
         label: &'static str,
-        status: Arc<Mutex<Status>>,
+        state: Arc<Mutex<State>>,
         interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
     ) -> UartWorker {
         let (input_buffer_thread, input_chans) =
-            spawn_input_buffer_thread(label, status.clone(), interrupt_bus.clone());
+            spawn_input_buffer_thread(label, state.clone(), interrupt_bus.clone());
         let (output_buffer_thread, output_chans) =
-            spawn_output_buffer_thread(label, status, interrupt_bus);
+            spawn_output_buffer_thread(label, state, interrupt_bus);
 
         UartWorker {
             input_buffer_thread_exit: input_chans.exit,
@@ -406,10 +409,8 @@ impl UartWorker {
 #[derive(Debug)]
 pub struct Uart {
     label: &'static str,
-
-    status: Arc<Mutex<Status>>,
+    state: Arc<Mutex<State>>,
     interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
-
     worker: UartWorker,
 }
 
@@ -420,20 +421,18 @@ impl Uart {
         interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
         index: u8,
     ) -> Uart {
-        let status = Arc::new(Mutex::new(Status::new_hle(index)));
-
-        let worker = UartWorker::new(label, status.clone(), interrupt_bus.clone());
-
+        let state = Arc::new(Mutex::new(State::new_hle(index)));
+        let worker = UartWorker::new(label, state.clone(), interrupt_bus.clone());
         Uart {
             label,
-            status,
+            state,
             interrupt_bus,
             worker,
         }
     }
 
-    fn lock_status(&mut self) -> MutexGuard<Status> {
-        self.status.lock().unwrap()
+    fn lock_state(&mut self) -> MutexGuard<State> {
+        self.state.lock().unwrap()
     }
 
     /// Register an input handler task with the UART.
@@ -512,45 +511,45 @@ impl Memory for Uart {
         match offset {
             // data (8-bit)
             0x00 => {
-                let mut status = self.status.lock().unwrap();
+                let mut state = self.state.lock().unwrap();
                 // If the buffer is empty return a dummy value
-                let val = status.rx_buf.pop_front().unwrap_or(0) as u32;
-                if status.rx_buf.is_empty() {
-                    status.timeout = false;
+                let val = state.rx_buf.pop_front().unwrap_or(0) as u32;
+                if state.rx_buf.is_empty() {
+                    state.timeout = false;
                 }
-                status.update_interrupts(&self.interrupt_bus);
+                state.update_interrupts(&self.interrupt_bus);
                 Ok(val)
             }
             // read status
             0x04 => {
-                let overrun = self.lock_status().overrun;
+                let overrun = self.lock_state().overrun;
                 Ok(if overrun { 8 } else { 0 })
             }
             // line control
             0x08 | 0x0C | 0x10 => {
                 let idx = ((offset - 8) / 4) as usize;
-                let val = self.lock_status().linctrl[idx];
+                let val = self.lock_state().linctrl[idx];
                 Ok(val)
             }
             // control
-            0x14 => Ok(self.lock_status().ctrl),
+            0x14 => Ok(self.lock_state().ctrl),
             // flag
             0x18 => {
-                let status = self.lock_status();
+                let state = self.lock_state();
                 let mut result = 0;
-                if status.tx_buf_size == 0 {
+                if state.tx_buf_size == 0 {
                     result |= 0x80;
                 }
-                if status.rx_buf.len() >= status.fifo_size {
+                if state.rx_buf.len() >= state.fifo_size {
                     result |= 0x40;
                 }
-                if status.tx_buf_size >= status.fifo_size {
+                if state.tx_buf_size >= state.fifo_size {
                     result |= 0x20;
                 }
-                if status.rx_buf.is_empty() {
+                if state.rx_buf.is_empty() {
                     result |= 0x10;
                 }
-                if status.busy {
+                if state.busy {
                     result |= 0x8;
                 } else {
                     // XXX: set cts when not sending data
@@ -560,7 +559,7 @@ impl Memory for Uart {
                 Ok(result)
             }
             // interrupt identification and clear register
-            0x1C => Ok(self.lock_status().get_int_id() as u32),
+            0x1C => Ok(self.lock_state().get_int_id() as u32),
             // dma control
             0x28 => crate::mem_unimpl!("DMAR_REG"),
             _ => crate::mem_unexpected!(),
@@ -572,55 +571,55 @@ impl Memory for Uart {
         match offset {
             // data (8-bit)
             0x00 => {
-                let mut status = self.status.lock().unwrap();
+                let mut state = self.state.lock().unwrap();
                 // Drop the byte if the fifo is full
-                if status.tx_buf_size < status.fifo_size {
+                if state.tx_buf_size < state.fifo_size {
                     // A little awkward, but it is important that
                     // this send happens while under lock, as
                     // otherwise it could lead to a race condition
-                    // where the sender thread locks status before
+                    // where the sender thread locks state before
                     // this thread does.
                     self.worker.device_output_chan.send(val as u8).unwrap();
-                    status.tx_buf_size += 1;
-                    status.update_interrupts(&self.interrupt_bus);
+                    state.tx_buf_size += 1;
+                    state.update_interrupts(&self.interrupt_bus);
                 } else {
                     warn!("{} dropping sent byte due to full FIFO", self.label);
                 }
                 Ok(())
             }
-            // read status
+            // write status
             0x04 => {
-                let mut status = self.status.lock().unwrap();
-                status.overrun = false;
-                status.update_interrupts(&self.interrupt_bus);
+                let mut state = self.state.lock().unwrap();
+                state.overrun = false;
+                state.update_interrupts(&self.interrupt_bus);
                 Ok(())
             }
             // line control
             0x08 | 0x0C | 0x10 => {
                 let idx = ((offset - 8) / 4) as usize;
-                let mut status = self.status.lock().unwrap();
-                status.linctrl[idx] = val;
-                status.update_linctrl();
-                status.update_interrupts(&self.interrupt_bus);
+                let mut state = self.state.lock().unwrap();
+                state.linctrl[idx] = val;
+                state.update_linctrl();
+                state.update_interrupts(&self.interrupt_bus);
                 Ok(())
             }
             // control
             0x14 => {
-                let mut status = self.status.lock().unwrap();
-                status.ctrl = val;
-                status.update_interrupts(&self.interrupt_bus);
+                let mut state = self.state.lock().unwrap();
+                state.ctrl = val;
+                state.update_interrupts(&self.interrupt_bus);
                 Ok(())
             }
             // flag
             0x18 => crate::mem_unimpl!("FLAG_REG"),
             // interrupt identification and clear register
             0x1C => {
-                let mut status = self.status.lock().unwrap();
-                if status.cts_change {
+                let mut state = self.state.lock().unwrap();
+                if state.cts_change {
                     trace!("{} clearing cts interrupt", self.label);
                 }
-                status.cts_change = false;
-                status.update_interrupts(&self.interrupt_bus);
+                state.cts_change = false;
+                state.update_interrupts(&self.interrupt_bus);
                 Ok(())
             }
             // dma control
