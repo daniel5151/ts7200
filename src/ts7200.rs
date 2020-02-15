@@ -128,22 +128,25 @@ impl Ts7200 {
     }
 
     fn check_exception(&mut self, blocking: CheckException) {
-        let iter: Box<dyn Iterator<Item = (Interrupt, bool)>> = match blocking {
-            CheckException::Blocking => Box::new(
-                std::iter::once(self.interrupt_bus.recv().unwrap())
-                    .chain(self.interrupt_bus.try_iter()),
-            ),
-
-            CheckException::NonBlocking => Box::new(self.interrupt_bus.try_iter()),
-        };
-
-        for (interrupt, state) in iter {
-            if state {
-                self.devices.vicmgr.assert_interrupt(interrupt)
-            } else {
-                self.devices.vicmgr.clear_interrupt(interrupt)
-            }
+        macro_rules! check_exception {
+            ($iter:expr) => {{
+                for (interrupt, state) in $iter {
+                    if state {
+                        self.devices.vicmgr.assert_interrupt(interrupt)
+                    } else {
+                        self.devices.vicmgr.clear_interrupt(interrupt)
+                    }
+                }
+            }};
         }
+
+        match blocking {
+            CheckException::NonBlocking => check_exception!(self.interrupt_bus.try_iter()),
+            CheckException::Blocking => {
+                check_exception!(std::iter::once(self.interrupt_bus.recv().unwrap())
+                    .chain(self.interrupt_bus.try_iter()))
+            }
+        };
 
         if self.devices.vicmgr.fiq() {
             self.cpu.exception(Exception::FastInterrupt);
