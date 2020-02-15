@@ -290,6 +290,34 @@ impl Target for Ts7200 {
         push_reg(&self.cpu.reg_get(bank, reg::CPSR).to_le_bytes());
     }
 
+    fn write_registers(&mut self, regs: &[u8]) {
+        if regs.len() != (16 + 25 + 1) * 4 {
+            error!("Wrong data length for write_registers: {}", regs.len());
+            return;
+        }
+        let mut next = {
+            let mut idx: usize = 0;
+            move || {
+                use std::convert::TryInto;
+                idx += 4;
+                u32::from_le_bytes(regs[idx - 4..idx].try_into().unwrap())
+            }
+        };
+        let bank = self.cpu.get_mode().reg_bank();
+        for i in 0..13 {
+            self.cpu.reg_set(bank, i, next());
+        }
+        self.cpu.reg_set(bank, reg::SP, next());
+        self.cpu.reg_set(bank, reg::LR, next());
+        self.cpu.reg_set(bank, reg::PC, next());
+        // Floating point registers, unused
+        for _ in 0..25 {
+            next();
+        }
+
+        self.cpu.reg_set(bank, reg::CPSR, next());
+    }
+
     fn read_pc(&mut self) -> u32 {
         self.cpu.reg_get(self.cpu.get_mode().reg_bank(), reg::PC)
     }
