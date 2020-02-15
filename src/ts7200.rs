@@ -292,7 +292,7 @@ impl Target for Ts7200 {
 
     fn write_registers(&mut self, regs: &[u8]) {
         if regs.len() != (16 + 25 + 1) * 4 {
-            warn!("Wrong data length for write_registers: {}", regs.len());
+            error!("Wrong data length for write_registers: {}", regs.len());
             return;
         }
         let mut next = {
