@@ -127,9 +127,15 @@ impl Status {
             let assert = (int_id & mask) != 0;
             if assert != self.int_asserted[*int as usize] {
                 self.int_asserted[*int as usize] = assert;
-                interrupt_bus
-                    .send((int.hw_int(self.index), assert))
-                    .unwrap();
+                let hw_int = int.hw_int(self.index);
+                trace!(
+                    "UART{} setting interrupt {:?} to {:?} from {}",
+                    self.index,
+                    hw_int,
+                    assert,
+                    int_id
+                );
+                interrupt_bus.send((hw_int, assert)).unwrap();
             }
         }
     }
@@ -579,6 +585,9 @@ impl Memory for Uart {
             // interrupt identification and clear register
             0x1C => {
                 let mut status = self.status.lock().unwrap();
+                if log_enabled!(log::Level::Trace) && status.cts_change {
+                    trace!("{} clearing cts interrupt", self.label);
+                }
                 status.cts_change = false;
                 status.update_interrupts(&self.interrupt_bus);
                 Ok(())
