@@ -471,10 +471,6 @@ impl Uart {
         }
     }
 
-    fn lock_state(&mut self) -> MutexGuard<State> {
-        self.state.lock().unwrap()
-    }
-
     /// Register an input handler task with the UART.
     ///
     /// The provided task SHOULD send data to UART via the provided Sender
@@ -548,10 +544,10 @@ impl Memory for Uart {
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
+        let mut state = self.state.lock().unwrap();
         match offset {
             // data (8-bit)
             0x00 => {
-                let mut state = self.state.lock().unwrap();
                 // If the buffer is empty return a dummy value
                 let val = state.rx_buf.pop_front().unwrap_or(0) as u32;
                 if state.rx_buf.is_empty() {
@@ -561,15 +557,11 @@ impl Memory for Uart {
                 Ok(val)
             }
             // read status
-            0x04 => {
-                let overrun = self.lock_state().overrun;
-                Ok(if overrun { 8 } else { 0 })
-            }
+            0x04 => Ok(if state.overrun { 8 } else { 0 }),
             // line control high
-            0x08 => Ok(self.lock_state().linctrl[0]),
+            0x08 => Ok(state.linctrl[0]),
             // line control mid
             0x0C => {
-                let state = self.state.lock().unwrap();
                 if state.linctrl_latched {
                     warn!("{} reading stale data from LinCtrlMid", self.label);
                 }
@@ -577,17 +569,15 @@ impl Memory for Uart {
             }
             // line control low
             0x10 => {
-                let state = self.state.lock().unwrap();
                 if state.linctrl_latched {
                     warn!("{} reading stale data from LinCtrlLow", self.label);
                 }
                 Ok(state.linctrl[2])
             }
             // control
-            0x14 => Ok(self.lock_state().ctrl),
+            0x14 => Ok(state.ctrl),
             // flag
             0x18 => {
-                let state = self.lock_state();
                 let mut result = 0;
                 if state.tx_buf_size == 0 {
                     result |= 0x80;
@@ -611,7 +601,7 @@ impl Memory for Uart {
                 Ok(result)
             }
             // interrupt identification and clear register
-            0x1C => Ok(self.lock_state().get_int_id() as u32),
+            0x1C => Ok(state.get_int_id() as u32),
             // dma control
             0x28 => crate::mem_unimpl!("DMAR_REG"),
             _ => crate::mem_unexpected!(),
@@ -620,10 +610,10 @@ impl Memory for Uart {
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
+        let mut state = self.state.lock().unwrap();
         match offset {
             // data (8-bit)
             0x00 => {
-                let mut state = self.state.lock().unwrap();
                 // Drop the byte if the fifo is full
                 if state.tx_buf_size < state.fifo_size {
                     // A little awkward, but it is important that
@@ -641,14 +631,12 @@ impl Memory for Uart {
             }
             // write status
             0x04 => {
-                let mut state = self.state.lock().unwrap();
                 state.overrun = false;
                 state.update_interrupts(&self.interrupt_bus);
                 Ok(())
             }
             // line control high
             0x08 => {
-                let mut state = self.state.lock().unwrap();
                 state.linctrl_latched = false;
                 state.linctrl_latch[0] = val;
 
@@ -659,21 +647,18 @@ impl Memory for Uart {
             }
             // line control mid
             0x0C => {
-                let mut state = self.state.lock().unwrap();
                 state.linctrl_latched = true;
                 state.linctrl_latch[1] = val;
                 Ok(())
             }
             // line control low
             0x10 => {
-                let mut state = self.state.lock().unwrap();
                 state.linctrl_latched = true;
                 state.linctrl_latch[2] = val;
                 Ok(())
             }
             // control
             0x14 => {
-                let mut state = self.state.lock().unwrap();
                 state.ctrl = val;
                 state.update_interrupts(&self.interrupt_bus);
                 Ok(())
@@ -682,7 +667,6 @@ impl Memory for Uart {
             0x18 => crate::mem_unimpl!("FLAG_REG"),
             // interrupt identification and clear register
             0x1C => {
-                let mut state = self.state.lock().unwrap();
                 if state.cts_change {
                     trace!("{} clearing cts interrupt", self.label);
                 }
