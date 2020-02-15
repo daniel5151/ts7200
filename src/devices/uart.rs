@@ -57,6 +57,8 @@ struct State {
     label: &'static str,
     interrupts: UartInterrupts,
 
+    linctrl_latched: bool,
+    linctrl_latch: [u32; 3],
     linctrl: [u32; 3],
     ctrl: u32,
 
@@ -84,6 +86,8 @@ impl State {
             label,
             interrupts,
 
+            linctrl_latched: false,
+            linctrl_latch: [0, 0, 0],
             linctrl: [0, 0, 0],
             ctrl: 0,
 
@@ -561,11 +565,23 @@ impl Memory for Uart {
                 let overrun = self.lock_state().overrun;
                 Ok(if overrun { 8 } else { 0 })
             }
-            // line control
-            0x08 | 0x0C | 0x10 => {
-                let idx = ((offset - 8) / 4) as usize;
-                let val = self.lock_state().linctrl[idx];
-                Ok(val)
+            // line control high
+            0x08 => Ok(self.lock_state().linctrl[0]),
+            // line control mid
+            0x0C => {
+                let state = self.state.lock().unwrap();
+                if state.linctrl_latched {
+                    warn!("{} reading stale data from LinCtrlMid", self.label);
+                }
+                Ok(state.linctrl[1])
+            }
+            // line control low
+            0x10 => {
+                let state = self.state.lock().unwrap();
+                if state.linctrl_latched {
+                    warn!("{} reading stale data from LinCtrlLow", self.label);
+                }
+                Ok(state.linctrl[2])
             }
             // control
             0x14 => Ok(self.lock_state().ctrl),
@@ -630,13 +646,29 @@ impl Memory for Uart {
                 state.update_interrupts(&self.interrupt_bus);
                 Ok(())
             }
-            // line control
-            0x08 | 0x0C | 0x10 => {
-                let idx = ((offset - 8) / 4) as usize;
+            // line control high
+            0x08 => {
                 let mut state = self.state.lock().unwrap();
-                state.linctrl[idx] = val;
+                state.linctrl_latched = false;
+                state.linctrl_latch[0] = val;
+
+                state.linctrl = state.linctrl_latch;
                 state.update_linctrl();
                 state.update_interrupts(&self.interrupt_bus);
+                Ok(())
+            }
+            // line control mid
+            0x0C => {
+                let mut state = self.state.lock().unwrap();
+                state.linctrl_latched = true;
+                state.linctrl_latch[1] = val;
+                Ok(())
+            }
+            // line control low
+            0x10 => {
+                let mut state = self.state.lock().unwrap();
+                state.linctrl_latched = true;
+                state.linctrl_latch[2] = val;
                 Ok(())
             }
             // control
