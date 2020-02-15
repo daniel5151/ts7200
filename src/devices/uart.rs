@@ -585,7 +585,7 @@ impl Memory for Uart {
             // interrupt identification and clear register
             0x1C => {
                 let mut status = self.status.lock().unwrap();
-                if log_enabled!(log::Level::Trace) && status.cts_change {
+                if status.cts_change {
                     trace!("{} clearing cts interrupt", self.label);
                 }
                 status.cts_change = false;
