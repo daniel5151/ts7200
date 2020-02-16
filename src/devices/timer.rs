@@ -133,14 +133,14 @@ impl Timer {
     }
 
     /// Lazily update the registers on read / write.
-    fn update_regs(&mut self) {
+    fn update_regs(&mut self) -> MemResult<()> {
         // calculate the time delta
         let now = Instant::now();
         let dt = now.duration_since(self.last_time).as_nanos() as u64;
         self.last_time = now;
 
         if !self.enabled {
-            return;
+            return Ok(());
         }
 
         let khz = self.clksel.khz();
@@ -157,8 +157,13 @@ impl Timer {
             Mode::Periodic => {
                 let loadval = match self.loadval {
                     Some(v) => v,
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    None => panic!("trying to use unset load value with {}", self.label),
+                    None => {
+                        return Err(ContractViolation {
+                            msg: "Periodic mode enabled before setting a Load value".to_string(),
+                            severity: log::Level::Error,
+                            stub_val: None,
+                        })
+                    }
                 };
                 self.val = if loadval == 0 {
                     0
@@ -170,6 +175,8 @@ impl Timer {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
@@ -194,14 +201,17 @@ impl Memory for Timer {
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
-        self.update_regs();
+        self.update_regs()?;
 
         match offset {
-            0x00 => Ok(match self.loadval {
-                Some(v) => v,
-                // FIXME: emit warning when device contract is violated (instead of panic)
-                None => panic!("tried to read {} Load before it's been set it", self.label),
-            }),
+            0x00 => match self.loadval {
+                Some(v) => Ok(v),
+                None => Err(ContractViolation {
+                    msg: "Cannot read Load register before it's been set".to_string(),
+                    severity: log::Level::Error,
+                    stub_val: None,
+                }),
+            },
             0x04 => Ok(self.val),
             0x08 => {
                 let val = ((self.clksel as u32) << 3)
@@ -215,7 +225,7 @@ impl Memory for Timer {
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
-        self.update_regs();
+        self.update_regs()?;
 
         match offset {
             0x00 => {
@@ -223,8 +233,11 @@ impl Memory for Timer {
                 // this causes the Timer Value register to be updated with an undetermined
                 // value."
                 if self.enabled {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("tried to write to {} Load while the timer is enabled", val);
+                    return Err(ContractViolation {
+                        msg: "cannot write Load register while timer is enabled".to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    });
                 }
 
                 let val = val & self.wrapmask;
@@ -251,9 +264,20 @@ impl Memory for Timer {
                     self.microticks = 0;
 
                     if self.mode == Mode::Periodic {
-                        let period = Duration::from_nanos(
-                            (self.loadval.unwrap() as u64) * 1_000_000 / self.clksel.khz(),
-                        );
+                        let loadval = match self.loadval {
+                            Some(v) => v,
+                            None => {
+                                return Err(ContractViolation {
+                                    msg: "Periodic mode enabled before setting a Load value"
+                                        .to_string(),
+                                    severity: log::Level::Error,
+                                    stub_val: None,
+                                })
+                            }
+                        };
+
+                        let period =
+                            Duration::from_nanos((loadval as u64) * 1_000_000 / self.clksel.khz());
                         self.interrupter_tx
                             .send(InterrupterMsg::Enabled {
                                 next: Instant::now() + period,

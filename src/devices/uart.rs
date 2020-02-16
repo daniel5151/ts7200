@@ -580,16 +580,28 @@ impl Memory for Uart {
             // line control mid
             0x0C => {
                 if state.linctrl_latched {
-                    panic!("{} reading stale data from LinCtrlMid", self.label);
+                    Err(ContractViolation {
+                        msg: "Tried to read stale data (did you forget to update LinCtrlHigh?)"
+                            .to_string(),
+                        severity: log::Level::Warn,
+                        stub_val: None,
+                    })
+                } else {
+                    Ok(state.linctrl[1])
                 }
-                Ok(state.linctrl[1])
             }
             // line control low
             0x10 => {
                 if state.linctrl_latched {
-                    panic!("{} reading stale data from LinCtrlLow", self.label);
+                    Err(ContractViolation {
+                        msg: "Tried to read stale data (did you forget to update LinCtrlHigh?)"
+                            .to_string(),
+                        severity: log::Level::Warn,
+                        stub_val: None,
+                    })
+                } else {
+                    Ok(state.linctrl[2])
                 }
-                Ok(state.linctrl[2])
             }
             // control
             0x14 => Ok(state.ctrl),

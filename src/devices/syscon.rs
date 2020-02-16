@@ -84,8 +84,11 @@ impl Memory for Syscon {
                     self.power_state = PowerState::Halt;
                     Ok(0) // doesn't matter
                 } else {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("Cannot enter Halt mode if SHena != 1 in syscon DeviceCfg");
+                    Err(ContractViolation {
+                        msg: "Cannot enter Halt mode if SHena != 1 in syscon DeviceCfg".to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    })
                 }
             }
             0x0C => {
@@ -93,8 +96,12 @@ impl Memory for Syscon {
                     self.power_state = PowerState::Standby;
                     Ok(0) // doesn't matter
                 } else {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("Cannot enter Standby mode if SHena != 1 in syscon DeviceCfg");
+                    Err(ContractViolation {
+                        msg: "Cannot enter Standby mode if SHena != 1 in syscon DeviceCfg"
+                            .to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    })
                 }
             }
             0x18 => Err(Unimplemented),
@@ -127,11 +134,11 @@ impl Memory for Syscon {
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
         if (0x80..=0x9C).contains(&offset) {
             if self.is_locked {
-                // FIXME: emit warning when device contract is violated (instead of panic)
-                panic!(
-                    "Attempted to writing to SW locked syscon register (offset {:#x?})!",
-                    offset
-                );
+                return Err(ContractViolation {
+                    msg: "Attempted to writing to SW locked syscon register".to_string(),
+                    severity: log::Level::Error,
+                    stub_val: None,
+                });
             } else {
                 // syscon re-locks after a locked register has been written to
                 self.is_locked = true;
@@ -161,12 +168,14 @@ impl Memory for Syscon {
             0x9C => Err(Unimplemented),
             0xC0 => {
                 if val == 0xAA {
-                    self.is_locked = false;
+                    Ok(self.is_locked = false)
                 } else {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("wrote non-0xAA value to SysSWLock register!");
+                    Err(ContractViolation {
+                        msg: "wrote non-0xAA value to SysSWLock register".to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    })
                 }
-                Ok(())
             }
             _ => Err(Unexpected),
         }

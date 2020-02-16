@@ -22,6 +22,10 @@ pub enum FatalError {
         in_mem_space_of: String,
         reason: MemException,
     },
+    ContractViolation {
+        in_mem_space_of: String,
+        msg: String,
+    },
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
@@ -150,7 +154,16 @@ impl Ts7200 {
                 MemAccessKind::Read => error!("{} read from write-only register", ctx),
                 MemAccessKind::Write => error!("{} write to read-only register", ctx),
             },
-            ContractViolation { msg, severity, .. } => log!(severity, "{} {}", ctx, msg),
+            ContractViolation { msg, severity, .. } => {
+                if severity == log::Level::Error {
+                    return Err(FatalError::ContractViolation {
+                        in_mem_space_of,
+                        msg,
+                    });
+                } else {
+                    log!(severity, "{} {}", ctx, msg)
+                }
+            }
         }
 
         Ok(())
