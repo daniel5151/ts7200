@@ -22,7 +22,7 @@ pub enum FatalError {
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
-enum CheckException {
+enum BlockMode {
     Blocking,
     NonBlocking,
 }
@@ -127,8 +127,8 @@ impl Ts7200 {
         Ok(())
     }
 
-    fn check_exception(&mut self, blocking: CheckException) {
-        macro_rules! check_exception {
+    fn check_device_interrupts(&mut self, blocking: BlockMode) {
+        macro_rules! check_device_interrupts {
             ($iter:expr) => {{
                 for (interrupt, state) in $iter {
                     if state {
@@ -141,9 +141,9 @@ impl Ts7200 {
         }
 
         match blocking {
-            CheckException::NonBlocking => check_exception!(self.interrupt_bus.try_iter()),
-            CheckException::Blocking => {
-                check_exception!(std::iter::once(self.interrupt_bus.recv().unwrap())
+            BlockMode::NonBlocking => check_device_interrupts!(self.interrupt_bus.try_iter()),
+            BlockMode::Blocking => {
+                check_device_interrupts!(std::iter::once(self.interrupt_bus.recv().unwrap())
                     .chain(self.interrupt_bus.try_iter()))
             }
         };
@@ -179,10 +179,10 @@ impl Ts7200 {
                     if let Some(e) = mem.take_exception() {
                         Ts7200::handle_mem_exception(&self.cpu, e)?;
                     }
-                    self.check_exception(CheckException::NonBlocking);
+                    self.check_device_interrupts(BlockMode::NonBlocking);
                 }
                 PowerState::Halt => {
-                    self.check_exception(CheckException::Blocking);
+                    self.check_device_interrupts(BlockMode::Blocking);
                     if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                         self.devices.syscon.set_run_mode();
                     };
@@ -259,12 +259,12 @@ impl Target for Ts7200 {
                 if let Some(e) = mem.take_exception() {
                     Ts7200::handle_mem_exception(&self.cpu, e)?;
                 }
-                self.check_exception(CheckException::NonBlocking);
+                self.check_device_interrupts(BlockMode::NonBlocking);
             }
             PowerState::Halt => {
                 // unlike `run`, we do _not_ want to block the gdb thread waiting
                 // for an exception.
-                self.check_exception(CheckException::NonBlocking);
+                self.check_device_interrupts(BlockMode::NonBlocking);
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
                 };
