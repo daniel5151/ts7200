@@ -106,11 +106,11 @@ impl Memory for Vic {
             0x08 => Ok(self.rawstatus()),
             0x0c => Ok(self.select),
             0x10 => Ok(self.enabled),
-            0x14 => crate::mem_unexpected!(),
+            0x14 => crate::mem_invalid_access!("IntEnClear"),
             0x18 => Ok(self.software_status),
-            0x1c => Ok(0),
-            // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
-            0x20 => crate::mem_stub!("PROTECTION", 0),
+            0x1c => crate::mem_invalid_access!("SoftIntClear"),
+            // TODO: enforce that VIC Protection bit must be accessed in privileged mode
+            0x20 => crate::mem_stub!("Protection", 0),
             0x30 => Ok(self.isr_address()),
             0x34 => Ok(self.default_isr),
             0x100..=0x13c => {
@@ -123,7 +123,7 @@ impl Memory for Vic {
                 let result = (if entry.enabled { 0x20 } else { 0 }) + entry.source as u32;
                 Ok(result)
             }
-            // Next 4 values are hardware identification values:
+            // Next 4 values are hard-wired hardware identification values
             0xfe0 => Ok(0x90),
             0xfe4 => Ok(0x11),
             0xfe8 => Ok(0x04),
@@ -135,16 +135,18 @@ impl Memory for Vic {
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
         match offset {
+            0x00 => crate::mem_invalid_access!("IRQStatus"),
+            0x04 => crate::mem_invalid_access!("FIQStatus"),
+            0x08 => crate::mem_invalid_access!("RawIntr"),
             0x0c => Ok(self.select = val),
             0x10 => Ok(self.enabled = val),
             0x14 => Ok(self.enabled &= !val),
             0x18 => Ok(self.software_status |= val),
             0x1c => Ok(self.software_status &= !val),
-            // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
-            0x20 => crate::mem_stub!("PROTECTION"),
-            // Writing to this signals to the Vic that the interrupt
-            // has been serviced.  We don't implement the behaviour
-            // that cares about that for now, so no-op.
+            // TODO: enforce that VIC Protection bit must be accessed in privileged mode
+            0x20 => crate::mem_stub!("Protection"),
+            // Writing to this signals to the Vic that the interrupt has been serviced.
+            // We don't implement the behavior that cares about that for now, so no-op.
             0x30 => Ok(()),
             0x34 => Ok(self.default_isr = val),
             0x100..=0x13c => {
@@ -159,6 +161,10 @@ impl Memory for Vic {
 
                 Ok(())
             }
+            0xfe0 => crate::mem_invalid_access!("PeriphID0"),
+            0xfe4 => crate::mem_invalid_access!("PeriphID1"),
+            0xfe8 => crate::mem_invalid_access!("PeriphID2"),
+            0xfec => crate::mem_invalid_access!("PeriphID3"),
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)

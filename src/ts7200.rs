@@ -103,25 +103,25 @@ impl Ts7200 {
     }
 
     fn handle_mem_exception(cpu: &Cpu, e: MemException) -> Result<(), FatalError> {
-        use MemExceptionKind::*;
+        let ctx = format!(
+            "[pc {:#010x?}][{}]",
+            cpu.reg_get(0, reg::PC),
+            e.identifier()
+        );
 
+        use MemExceptionKind::*;
         match e.kind() {
             Unimplemented | Unexpected => return Err(FatalError::FatalMemException(e)),
+            StubRead(_) => warn!("{} stubbed read", ctx),
+            StubWrite => warn!("{} stubbed write", ctx),
             Misaligned => {
                 // FIXME: Misaligned access (i.e: Data Abort) should be a CPU exception.
                 return Err(FatalError::FatalMemException(e));
             }
-            // non-fatal exceptions
-            StubRead(_) => warn!(
-                "[pc {:#010x?}] stubbed read from {}",
-                cpu.reg_get(0, reg::PC),
-                e.identifier()
-            ),
-            StubWrite => warn!(
-                "[pc {:#010x?}] stubbed write to  {}",
-                cpu.reg_get(0, reg::PC),
-                e.identifier()
-            ),
+            InvalidAccess => match e.access_kind().unwrap() {
+                MemAccessKind::Read => error!("{} read from write-only register", ctx),
+                MemAccessKind::Write => error!("{} write to read-only register", ctx),
+            },
         }
 
         Ok(())

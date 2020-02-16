@@ -563,14 +563,14 @@ impl Memory for Uart {
             // line control mid
             0x0C => {
                 if state.linctrl_latched {
-                    warn!("{} reading stale data from LinCtrlMid", self.label);
+                    panic!("{} reading stale data from LinCtrlMid", self.label);
                 }
                 Ok(state.linctrl[1])
             }
             // line control low
             0x10 => {
                 if state.linctrl_latched {
-                    warn!("{} reading stale data from LinCtrlLow", self.label);
+                    panic!("{} reading stale data from LinCtrlLow", self.label);
                 }
                 Ok(state.linctrl[2])
             }
@@ -603,7 +603,7 @@ impl Memory for Uart {
             // interrupt identification and clear register
             0x1C => Ok(state.get_int_id() as u32),
             // dma control
-            0x28 => crate::mem_unimpl!("DMAR_REG"),
+            0x28 => crate::mem_unimpl!("DMACtrl"),
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)
@@ -664,7 +664,7 @@ impl Memory for Uart {
                 Ok(())
             }
             // flag
-            0x18 => crate::mem_unimpl!("FLAG_REG"),
+            0x18 => crate::mem_invalid_access!("Flag"),
             // interrupt identification and clear register
             0x1C => {
                 if state.cts_change {
@@ -675,7 +675,7 @@ impl Memory for Uart {
                 Ok(())
             }
             // dma control
-            0x28 => crate::mem_unimpl!("DMAR_REG"),
+            0x28 => crate::mem_unimpl!("DMACtrl"),
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)

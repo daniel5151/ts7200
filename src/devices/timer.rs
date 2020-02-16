@@ -198,10 +198,7 @@ impl Memory for Timer {
                     | ((self.enabled as u32) << 7);
                 Ok(val)
             }
-            0x0C => {
-                // XXX: don't panic if writing to a read-only register
-                panic!("tried to write value to write-only Timer register");
-            }
+            0x0C => crate::mem_invalid_access!("Clear"),
             _ => crate::mem_unexpected!(),
         }
         .mem_ctx(offset, self)
@@ -227,10 +224,7 @@ impl Memory for Timer {
                 self.val = val;
                 Ok(())
             }
-            0x04 => {
-                // XXX: don't panic if writing to a read-only register
-                panic!("tried to write value to read-only Timer register");
-            }
+            0x04 => crate::mem_invalid_access!("Val"),
             0x08 => {
                 self.clksel = match val & (1 << 3) != 0 {
                     true => Clock::Khz508,

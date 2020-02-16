@@ -13,9 +13,9 @@ macro_rules! mem_unexpected {
 /// Utility macro to construct a [MemExceptionKind::Unimplemented]
 #[macro_export]
 macro_rules! mem_unimpl {
-    ($friendlyname:expr) => {
+    ($loc_name:expr) => {
         Err(crate::memory::MemException::new(
-            $friendlyname.to_string(),
+            $loc_name.to_string(),
             0,
             crate::memory::MemExceptionKind::Unimplemented,
         ))
@@ -26,19 +26,31 @@ macro_rules! mem_unimpl {
 /// [MemExceptionKind::StubWrite]
 #[macro_export]
 macro_rules! mem_stub {
-    ($friendlyname:expr, $stubval:expr) => {
+    ($loc_name:expr, $stubval:expr) => {
         Err(crate::memory::MemException::new(
-            $friendlyname.to_string(),
+            $loc_name.to_string(),
             0,
             crate::memory::MemExceptionKind::StubRead($stubval),
         ))
     };
 
-    ($friendlyname:expr) => {
+    ($loc_name:expr) => {
         Err(crate::memory::MemException::new(
-            $friendlyname.to_string(),
+            $loc_name.to_string(),
             0,
             crate::memory::MemExceptionKind::StubWrite,
+        ))
+    };
+}
+
+/// Utility macro to construct a [MemExceptionKind::InvalidAccess]
+#[macro_export]
+macro_rules! mem_invalid_access {
+    ($loc_name:expr) => {
+        Err(crate::memory::MemException::new(
+            $loc_name.to_string(),
+            0,
+            crate::memory::MemExceptionKind::InvalidAccess,
         ))
     };
 }

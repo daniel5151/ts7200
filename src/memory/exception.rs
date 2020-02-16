@@ -3,8 +3,7 @@ pub use super::{MemAccess, MemAccessKind, MemAccessVal, Memory};
 /// Kinds of Memory exceptions
 #[derive(Debug, Copy, Clone)]
 pub enum MemExceptionKind {
-    /// Attempted to access a device at an invalid offset
-    Misaligned,
+    // -- Internal Emulator Errors -- //
     /// Memory location that shouldn't have been accessed
     Unexpected,
     /// Memory location hasn't been implemented
@@ -13,6 +12,12 @@ pub enum MemExceptionKind {
     StubRead(u32),
     /// Memory location is using a stubbed write implementation
     StubWrite,
+
+    // -- Guest Access Violations -- //
+    /// Attempted to access a device at an invalid offset
+    Misaligned,
+    /// Attempted to read a write-only register / write to a read-only register
+    InvalidAccess,
 }
 
 /// Denotes some sort of memory access exception. May be recoverable.

@@ -142,14 +142,8 @@ impl Memory for Syscon {
         match offset {
             0x00 => crate::mem_unimpl!("PwrSts"),
             0x04 => crate::mem_unimpl!("PwrCnt"),
-            0x08 => {
-                // XXX: don't panic if writing to a read-only register
-                panic!("tried to write value to read-only syscon Halt register!");
-            }
-            0x0C => {
-                // XXX: don't panic if writing to a read-only register
-                panic!("tried to write value to read-only syscon Standby register!");
-            }
+            0x08 => crate::mem_invalid_access!("Halt"),
+            0x0C => crate::mem_invalid_access!("Standby"),
             0x18 => crate::mem_unimpl!("TEOI"),
             0x1C => crate::mem_unimpl!("STFClr"),
             0x20 => crate::mem_unimpl!("ClkSet1"),
