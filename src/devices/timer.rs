@@ -1,7 +1,7 @@
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel as mpsc;
+use crossbeam_channel as chan;
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
@@ -36,10 +36,10 @@ enum InterrupterMsg {
 
 fn spawn_interrupter_thread(
     label: &'static str,
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
-) -> (JoinHandle<()>, mpsc::Sender<InterrupterMsg>) {
-    let (tx, rx) = mpsc::unbounded::<InterrupterMsg>();
+) -> (JoinHandle<()>, chan::Sender<InterrupterMsg>) {
+    let (tx, rx) = chan::unbounded::<InterrupterMsg>();
     let thread = move || {
         let mut next: Option<Instant> = None;
         let mut period = Default::default();
@@ -59,11 +59,11 @@ fn spawn_interrupter_thread(
                     period = new_period;
                 }
                 Ok(InterrupterMsg::Disabled) => next = None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(chan::RecvTimeoutError::Disconnected) => {
                     // Sender exited
                     return;
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(chan::RecvTimeoutError::Timeout) => {
                     // Interrupt!
                     interrupt_bus.send((interrupt, true)).unwrap();
                     next = Some(
@@ -100,17 +100,17 @@ pub struct Timer {
     last_time: Instant,
     microticks: u32,
 
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
 
-    interrupter_tx: mpsc::Sender<InterrupterMsg>,
+    interrupter_tx: chan::Sender<InterrupterMsg>,
 }
 
 impl Timer {
     /// Create a new Timer
     pub fn new(
         label: &'static str,
-        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+        interrupt_bus: chan::Sender<(Interrupt, bool)>,
         interrupt: Interrupt,
         bits: usize,
     ) -> Timer {

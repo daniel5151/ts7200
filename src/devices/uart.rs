@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crossbeam_channel::{self as mpsc, select};
+use crossbeam_channel::{self as chan, select};
 use log::*;
 
 use crate::devices::vic::Interrupt;
@@ -161,7 +161,7 @@ impl State {
         (result & (self.ctrl >> 3)) as u8
     }
 
-    fn update_interrupts(&mut self, interrupt_bus: &mpsc::Sender<(Interrupt, bool)>) {
+    fn update_interrupts(&mut self, interrupt_bus: &chan::Sender<(Interrupt, bool)>) {
         let int_id = self.get_int_id();
 
         macro_rules! update_interrupt {
@@ -192,17 +192,17 @@ struct Exit;
 /// Structured return type for the various channels created as part of spawning
 /// a UART input buffer thread
 struct InputBufferThreadChans {
-    pub exit: mpsc::Sender<Exit>,
-    pub uart_input: mpsc::Sender<u8>,
+    pub exit: chan::Sender<Exit>,
+    pub uart_input: chan::Sender<u8>,
 }
 
 fn spawn_input_buffer_thread(
     label: &'static str,
     state: Arc<Mutex<State>>,
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
 ) -> (JoinHandle<()>, InputBufferThreadChans) {
-    let (uart_tx, uart_rx) = mpsc::unbounded();
-    let (exit_tx, exit_rx) = mpsc::bounded(1);
+    let (uart_tx, uart_rx) = chan::unbounded();
+    let (exit_tx, exit_rx) = chan::bounded(1);
     let thread = move || loop {
         let (can_timeout, bittime, word_len) = {
             let state = state.lock().unwrap();
@@ -216,7 +216,7 @@ fn spawn_input_buffer_thread(
             select! {
                 recv(uart_rx) -> b => match b {
                     Ok(b) => Some(b),
-                    Err(mpsc::RecvError) => panic!("uart_rx closed unexpectedly"),
+                    Err(chan::RecvError) => panic!("uart_rx closed unexpectedly"),
                 },
                 recv(exit_rx) -> _ => break,
                 default(bittime * 32) => None,
@@ -225,7 +225,7 @@ fn spawn_input_buffer_thread(
             select! {
                 recv(uart_rx) -> b => match b {
                     Ok(b) => Some(b),
-                    Err(mpsc::RecvError) => panic!("uart_rx closed unexpectedly"),
+                    Err(chan::RecvError) => panic!("uart_rx closed unexpectedly"),
                 },
                 recv(exit_rx) -> _ => break,
             }
@@ -268,25 +268,25 @@ fn spawn_input_buffer_thread(
 /// Structured return type for the various channels created as part of spawning
 /// a UART output buffer thread
 struct OutputBufferThreadChans {
-    pub exit: mpsc::Sender<Exit>,
-    pub uart_output: mpsc::Receiver<u8>,
-    pub device_output: mpsc::Sender<u8>,
+    pub exit: chan::Sender<Exit>,
+    pub uart_output: chan::Receiver<u8>,
+    pub device_output: chan::Sender<u8>,
 }
 
 fn spawn_output_buffer_thread(
     label: &'static str,
     state: Arc<Mutex<State>>,
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
 ) -> (JoinHandle<()>, OutputBufferThreadChans) {
-    let (uart_tx, uart_rx) = mpsc::unbounded();
-    let (device_tx, device_rx) = mpsc::unbounded();
-    let (exit_tx, exit_rx) = mpsc::bounded(1);
+    let (uart_tx, uart_rx) = chan::unbounded();
+    let (device_tx, device_rx) = chan::unbounded();
+    let (exit_tx, exit_rx) = chan::bounded(1);
     let thread = move || {
         loop {
             let b = select! {
                 recv(device_rx) -> b => match b {
                     Ok(b) => b,
-                    Err(mpsc::RecvError) => panic!("tx closed unexpectedly"),
+                    Err(chan::RecvError) => panic!("tx closed unexpectedly"),
                 },
                 recv(exit_rx) -> _ => break,
             };
@@ -305,7 +305,7 @@ fn spawn_output_buffer_thread(
             thread::sleep(bittime * word_len);
             match uart_tx.send(b) {
                 Ok(()) => (),
-                Err(mpsc::SendError(_)) => {
+                Err(chan::SendError(_)) => {
                     // Receiving end closed
                     return;
                 }
@@ -375,15 +375,15 @@ impl WriterTask {
 /// to terminate.
 #[derive(Debug)]
 struct UartWorker {
-    input_buffer_thread_exit: mpsc::Sender<Exit>,
-    output_buffer_thread_exit: mpsc::Sender<Exit>,
+    input_buffer_thread_exit: chan::Sender<Exit>,
+    output_buffer_thread_exit: chan::Sender<Exit>,
     // must be optional, as `.join()` can only be called on an owned JoinHandle
     input_buffer_thread: Option<JoinHandle<()>>,
     output_buffer_thread: Option<JoinHandle<()>>,
 
-    uart_input_chan: mpsc::Sender<u8>,
-    uart_output_chan: mpsc::Receiver<u8>,
-    device_output_chan: mpsc::Sender<u8>,
+    uart_input_chan: chan::Sender<u8>,
+    uart_output_chan: chan::Receiver<u8>,
+    device_output_chan: chan::Sender<u8>,
 
     user_reader_task: Option<ReaderTask>,
     user_writer_task: Option<WriterTask>,
@@ -420,7 +420,7 @@ impl UartWorker {
     fn new(
         label: &'static str,
         state: Arc<Mutex<State>>,
-        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+        interrupt_bus: chan::Sender<(Interrupt, bool)>,
     ) -> UartWorker {
         let (input_buffer_thread, input_chans) =
             spawn_input_buffer_thread(label, state.clone(), interrupt_bus.clone());
@@ -450,7 +450,7 @@ impl UartWorker {
 pub struct Uart {
     label: &'static str,
     state: Arc<Mutex<State>>,
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
     worker: UartWorker,
 }
 
@@ -458,7 +458,7 @@ impl Uart {
     /// Create a new uart
     pub fn new_hle(
         label: &'static str,
-        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+        interrupt_bus: chan::Sender<(Interrupt, bool)>,
         interrupts: UartInterrupts,
     ) -> Uart {
         let state = Arc::new(Mutex::new(State::new_hle(label, interrupts)));
@@ -480,7 +480,7 @@ impl Uart {
     /// the UART.
     pub fn install_reader_task<E>(
         &mut self,
-        install_reader_task: impl FnOnce(mpsc::Sender<u8>) -> Result<ReaderTask, E>,
+        install_reader_task: impl FnOnce(chan::Sender<u8>) -> Result<ReaderTask, E>,
     ) -> Result<Option<ReaderTask>, E> {
         let ret = self.worker.user_reader_task.take();
         self.worker.user_reader_task =
@@ -497,7 +497,7 @@ impl Uart {
     /// with the UART.
     pub fn install_writer_task<E>(
         &mut self,
-        install_writer_task: impl FnOnce(mpsc::Receiver<u8>) -> Result<WriterTask, E>,
+        install_writer_task: impl FnOnce(chan::Receiver<u8>) -> Result<WriterTask, E>,
     ) -> Result<Option<WriterTask>, E> {
         let ret = self.worker.user_writer_task.take();
         self.worker.user_writer_task =
@@ -516,8 +516,8 @@ impl Uart {
     pub fn install_io_tasks<E>(
         &mut self,
         install_io_tasks: impl FnOnce(
-            mpsc::Sender<u8>,
-            mpsc::Receiver<u8>,
+            chan::Sender<u8>,
+            chan::Receiver<u8>,
         ) -> Result<(ReaderTask, WriterTask), E>,
     ) -> Result<(Option<ReaderTask>, Option<WriterTask>), E> {
         let ret = (

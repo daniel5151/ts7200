@@ -1,7 +1,7 @@
 use std::io::Read;
 
 use arm7tdmi_rs::{reg, Cpu, Exception, Memory as ArmMemory};
-use crossbeam_channel as mpsc;
+use crossbeam_channel as chan;
 use log::*;
 
 use crate::devices;
@@ -33,7 +33,7 @@ pub struct Ts7200 {
     hle: bool,
     cpu: Cpu,
     devices: Ts7200Bus,
-    interrupt_bus: mpsc::Receiver<(Interrupt, bool)>,
+    interrupt_bus: chan::Receiver<(Interrupt, bool)>,
 }
 
 impl Ts7200 {
@@ -62,7 +62,7 @@ impl Ts7200 {
         ]);
 
         // create the interrupt bus
-        let (interrupt_bus_tx, interrupt_bus_rx) = mpsc::unbounded();
+        let (interrupt_bus_tx, interrupt_bus_rx) = chan::unbounded();
 
         // initialize system devices (in HLE state)
         let mut bus = Ts7200Bus::new_hle(interrupt_bus_tx);
@@ -375,7 +375,7 @@ pub struct Ts7200Bus {
 
 impl Ts7200Bus {
     #[allow(clippy::redundant_clone)] // Makes the code cleaner in this case
-    fn new_hle(interrupt_bus: mpsc::Sender<(Interrupt, bool)>) -> Ts7200Bus {
+    fn new_hle(interrupt_bus: chan::Sender<(Interrupt, bool)>) -> Ts7200Bus {
         use devices::*;
         Ts7200Bus {
             sdram: Ram::new(32 * 1024 * 1024), // 32 MB

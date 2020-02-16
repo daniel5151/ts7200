@@ -3,12 +3,12 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel as mpsc;
+use crossbeam_channel as chan;
 
 /// Spawns a thread that reads bytes received from a file at `path` to `tx`
 pub fn spawn_reader_thread(
     path: impl AsRef<Path> + std::fmt::Debug,
-    tx: mpsc::Sender<u8>,
+    tx: chan::Sender<u8>,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     let name = format!("File Reader | {:?}", path);
 
@@ -27,7 +27,7 @@ pub fn spawn_reader_thread(
 /// Spawns a thread that writes bytes received on `rx` to a file at `path`
 pub fn spawn_writer_thread(
     path: impl AsRef<Path> + std::fmt::Debug,
-    rx: mpsc::Receiver<u8>,
+    rx: chan::Receiver<u8>,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     let name = format!("File Writer | {:?}", path);
 
