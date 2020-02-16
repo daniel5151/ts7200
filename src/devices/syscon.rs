@@ -1,4 +1,4 @@
-use crate::memory::{MemResult, Memory};
+use crate::memory::{MemException::*, MemResult, Memory};
 
 /// EP9302 Power States (see page 5-10)
 #[derive(Debug, Clone, Copy)]
@@ -77,8 +77,8 @@ impl Memory for Syscon {
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
-            0x00 => crate::mem_unimpl!("PwrSts"),
-            0x04 => crate::mem_unimpl!("PwrCnt"),
+            0x00 => Err(Unimplemented),
+            0x04 => Err(Unimplemented),
             0x08 => {
                 if self.device_cfg & 1 == 1 {
                     self.power_state = PowerState::Halt;
@@ -97,22 +97,22 @@ impl Memory for Syscon {
                     panic!("Cannot enter Standby mode if SHena != 1 in syscon DeviceCfg");
                 }
             }
-            0x18 => crate::mem_unimpl!("TEOI"),
-            0x1C => crate::mem_unimpl!("STFClr"),
-            0x20 => crate::mem_unimpl!("ClkSet1"),
-            0x24 => crate::mem_unimpl!("ClkSet2"),
+            0x18 => Err(Unimplemented),
+            0x1C => Err(Unimplemented),
+            0x20 => Err(Unimplemented),
+            0x24 => Err(Unimplemented),
             0x40 => Ok(self.scratch_reg[0]),
             0x44 => Ok(self.scratch_reg[1]),
-            0x50 => crate::mem_unimpl!("APBWait"),
-            0x54 => crate::mem_unimpl!("BusMstrArb"),
-            0x58 => crate::mem_unimpl!("BootModeClr"),
+            0x50 => Err(Unimplemented),
+            0x54 => Err(Unimplemented),
+            0x58 => Err(Unimplemented),
             0x80 => Ok(self.device_cfg),
-            0x84 => crate::mem_unimpl!("VidClkDiv"),
-            0x88 => crate::mem_unimpl!("MIRClkDiv"),
-            0x8C => crate::mem_unimpl!("I2SClkDiv"),
-            0x90 => crate::mem_unimpl!("KeyTchClkDiv"),
-            0x94 => crate::mem_unimpl!("ChipID"),
-            0x9C => crate::mem_unimpl!("SysCfg"),
+            0x84 => Err(Unimplemented),
+            0x88 => Err(Unimplemented),
+            0x8C => Err(Unimplemented),
+            0x90 => Err(Unimplemented),
+            0x94 => Err(Unimplemented),
+            0x9C => Err(Unimplemented),
             0xC0 => {
                 if self.is_locked {
                     Ok(0x00)
@@ -120,7 +120,7 @@ impl Memory for Syscon {
                     Ok(0x01)
                 }
             }
-            _ => crate::mem_unexpected!(),
+            _ => Err(Unexpected),
         }
     }
 
@@ -139,26 +139,26 @@ impl Memory for Syscon {
         }
 
         match offset {
-            0x00 => crate::mem_unimpl!("PwrSts"),
-            0x04 => crate::mem_unimpl!("PwrCnt"),
-            0x08 => crate::mem_invalid_access!("Halt"),
-            0x0C => crate::mem_invalid_access!("Standby"),
-            0x18 => crate::mem_unimpl!("TEOI"),
-            0x1C => crate::mem_unimpl!("STFClr"),
-            0x20 => crate::mem_unimpl!("ClkSet1"),
-            0x24 => crate::mem_unimpl!("ClkSet2"),
+            0x00 => Err(Unimplemented),
+            0x04 => Err(Unimplemented),
+            0x08 => Err(InvalidAccess),
+            0x0C => Err(InvalidAccess),
+            0x18 => Err(Unimplemented),
+            0x1C => Err(Unimplemented),
+            0x20 => Err(Unimplemented),
+            0x24 => Err(Unimplemented),
             0x40 => Ok(self.scratch_reg[0] = val),
             0x44 => Ok(self.scratch_reg[1] = val),
-            0x50 => crate::mem_unimpl!("APBWait"),
-            0x54 => crate::mem_unimpl!("BusMstrArb"),
-            0x58 => crate::mem_unimpl!("BootModeClr"),
+            0x50 => Err(Unimplemented),
+            0x54 => Err(Unimplemented),
+            0x58 => Err(Unimplemented),
             0x80 => Ok(self.device_cfg = val),
-            0x84 => crate::mem_unimpl!("VidClkDiv"),
-            0x88 => crate::mem_unimpl!("MIRClkDiv"),
-            0x8C => crate::mem_unimpl!("I2SClkDiv"),
-            0x90 => crate::mem_unimpl!("KeyTchClkDiv"),
-            0x94 => crate::mem_unimpl!("ChipID"),
-            0x9C => crate::mem_unimpl!("SysCfg"),
+            0x84 => Err(Unimplemented),
+            0x88 => Err(Unimplemented),
+            0x8C => Err(Unimplemented),
+            0x90 => Err(Unimplemented),
+            0x94 => Err(Unimplemented),
+            0x9C => Err(Unimplemented),
             0xC0 => {
                 if val == 0xAA {
                     self.is_locked = false;
@@ -168,7 +168,7 @@ impl Memory for Syscon {
                 }
                 Ok(())
             }
-            _ => crate::mem_unexpected!(),
+            _ => Err(Unexpected),
         }
     }
 }

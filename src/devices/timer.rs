@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
-use crate::memory::{MemResult, Memory};
+use crate::memory::{MemException::*, MemResult, Memory};
 
 use super::vic::Interrupt;
 
@@ -209,8 +209,8 @@ impl Memory for Timer {
                     | ((self.enabled as u32) << 7);
                 Ok(val)
             }
-            0x0C => crate::mem_invalid_access!("Clear"),
-            _ => crate::mem_unexpected!(),
+            0x0C => Err(InvalidAccess),
+            _ => Err(Unexpected),
         }
     }
 
@@ -234,7 +234,7 @@ impl Memory for Timer {
                 self.val = val;
                 Ok(())
             }
-            0x04 => crate::mem_invalid_access!("Val"),
+            0x04 => Err(InvalidAccess),
             0x08 => {
                 self.clksel = match val & (1 << 3) != 0 {
                     true => Clock::Khz508,
@@ -270,7 +270,7 @@ impl Memory for Timer {
                 Ok(())
             }
             0x0C => Ok(self.interrupt_bus.send((self.interrupt, false)).unwrap()),
-            _ => crate::mem_unexpected!(),
+            _ => Err(Unexpected),
         }
     }
 }

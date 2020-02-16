@@ -17,7 +17,11 @@ pub const HLE_BOOTLOADER_LR: u32 = 0x0001_74c8;
 
 #[derive(Debug)]
 pub enum FatalError {
-    FatalMemException(MemException),
+    FatalMemException {
+        addr: u32,
+        in_mem_space_of: String,
+        reason: MemException,
+    },
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
@@ -112,24 +116,32 @@ impl Ts7200 {
             mem_except,
         } = exception;
 
-        let ctx = format!(
-            "[pc {:#010x?}][{}{}]",
-            cpu.reg_get(0, reg::PC),
-            mem.id(),
-            match mem.id_of(addr) {
-                Some(id) => format!(" > {}", id),
-                None => "".to_string(),
-            }
-        );
+        let pc = cpu.reg_get(0, reg::PC);
+        let in_mem_space_of = match mem.id_of(addr) {
+            Some(id) => id,
+            None => "<root>".to_string(),
+        };
+
+        let ctx = format!("[pc {:#010x?}][{}]", pc, in_mem_space_of);
 
         use MemException::*;
         match mem_except {
-            Unimplemented | Unexpected => return Err(FatalError::FatalMemException(mem_except)),
+            Unimplemented | Unexpected => {
+                return Err(FatalError::FatalMemException {
+                    addr,
+                    in_mem_space_of,
+                    reason: mem_except,
+                })
+            }
             StubRead(_) => warn!("{} stubbed read", ctx),
             StubWrite => warn!("{} stubbed write", ctx),
             Misaligned => {
                 // FIXME: Misaligned access (i.e: Data Abort) should be a CPU exception.
-                return Err(FatalError::FatalMemException(mem_except));
+                return Err(FatalError::FatalMemException {
+                    addr,
+                    in_mem_space_of,
+                    reason: mem_except,
+                });
             }
             InvalidAccess => match kind {
                 MemAccessKind::Read => error!("{} read from write-only register", ctx),

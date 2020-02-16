@@ -1,40 +1,5 @@
-/// Utility macro to construct a [MemException::Unexpected]
-#[macro_export]
-macro_rules! mem_unexpected {
-    () => {
-        Err(crate::memory::MemException::Unexpected)
-    };
-}
-
-/// Utility macro to construct a [MemException::Unimplemented]
-#[macro_export]
-macro_rules! mem_unimpl {
-    ($loc_name:expr) => {
-        Err(crate::memory::MemException::Unimplemented)
-    };
-}
-
-/// Utility macro to construct a [MemException::StubRead] or
-/// [MemException::StubWrite]
-#[macro_export]
-macro_rules! mem_stub {
-    ($loc_name:expr, $stubval:expr) => {
-        Err(crate::memory::MemException::StubRead($stubval))
-    };
-
-    ($loc_name:expr) => {
-        Err(crate::memory::MemException::StubWrite)
-    };
-}
-
-/// Utility macro to construct a [MemException::InvalidAccess]
-#[macro_export]
-macro_rules! mem_invalid_access {
-    ($loc_name:expr) => {
-        Err(crate::memory::MemException::InvalidAccess)
-    };
-}
-
+/// Utility macro to easily constuct an `Option<String>` corresponding to the
+/// id_of a subdevice
 #[macro_export]
 macro_rules! id_of_subdevice {
     ($device:expr, $offset:expr) => {{
