@@ -65,11 +65,33 @@ fn spawn_writer_thread(rx: chan::Receiver<u8>) -> (JoinHandle<()>, chan::Sender<
                     }
 
                 }
-                recv(ctrl_c_exit_rx) -> _ => {
-                    if let Some(handle) = raw_mode_handle {
-                        handle.suspend_raw_mode().unwrap();
+                recv(ctrl_c_exit_rx) -> exit => {
+                    match exit {
+                        Ok(CtrlC) => {
+                            if let Some(handle) = raw_mode_handle {
+                                handle.suspend_raw_mode().unwrap();
+                            }
+                            std::process::exit(1);
+                        }
+                        Err(chan::RecvError) => {
+                            // The reader thread has shut down without sending
+                            // a CtrlC message. This typically happens when
+                            // piping data in via stdout, and the sender process
+                            // shuts down.
+                            // The writer thread should stay alive though, and
+                            // keep processing outgoing data.
+                            //
+                            // NOTE: we clone this logic here as select! will
+                            // continously hammer this branch, even though the
+                            // channel has already closed
+                            for b in rx {
+                                stdout.write_all(&[b]).expect("io error");
+                                stdout.flush().expect("io error");
+                            }
+                            break;
+                        }
                     }
-                    std::process::exit(1);
+
                 }
             }
         }
