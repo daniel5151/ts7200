@@ -5,7 +5,7 @@ mod access;
 mod exception;
 
 pub use access::{MemAccess, MemAccessKind, MemAccessVal};
-pub use exception::{MemException, MemExceptionKind, MemResult, MemResultExt};
+pub use exception::{MemException, MemResult};
 
 /// Common memory trait used throughout the emulator.
 ///
@@ -40,11 +40,7 @@ pub trait Memory {
     /// Read a 8 bit value at a given offset
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         if offset & 0x3 != 0 {
-            Err(MemException::new(
-                self.id(),
-                offset,
-                MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
             self.r32(offset).map(|v| v as u8)
         }
@@ -53,11 +49,7 @@ pub trait Memory {
     /// Read a 16 bit value at a given offset
     fn r16(&mut self, offset: u32) -> MemResult<u16> {
         if offset & 0x3 != 0 {
-            Err(MemException::new(
-                self.id(),
-                offset,
-                MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
             self.r32(offset).map(|v| v as u16)
         }
@@ -66,11 +58,7 @@ pub trait Memory {
     /// Write a 8 bit value to the given offset
     fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
         if offset & 0x3 != 0 {
-            Err(MemException::new(
-                self.id(),
-                offset,
-                MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
             self.w32(offset, val as u32)
         }
@@ -79,11 +67,7 @@ pub trait Memory {
     /// Write a 16 bit value to the given offset
     fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
         if offset & 0x3 != 0 {
-            Err(MemException::new(
-                self.id(),
-                offset,
-                MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
             self.w32(offset, val as u32)
         }

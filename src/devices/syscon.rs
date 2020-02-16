@@ -1,4 +1,4 @@
-use crate::memory::{MemResult, MemResultExt, Memory};
+use crate::memory::{MemResult, Memory};
 
 /// EP9302 Power States (see page 5-10)
 #[derive(Debug, Clone, Copy)]
@@ -122,7 +122,6 @@ impl Memory for Syscon {
             }
             _ => crate::mem_unexpected!(),
         }
-        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
@@ -171,6 +170,5 @@ impl Memory for Syscon {
             }
             _ => crate::mem_unexpected!(),
         }
-        .mem_ctx(offset, self)
     }
 }

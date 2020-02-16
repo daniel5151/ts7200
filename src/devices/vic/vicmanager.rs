@@ -57,9 +57,9 @@ impl Memory for VicManager {
 
     fn id_of(&self, offset: u32) -> Option<String> {
         if offset < 0x10000 {
-            self.vic1.id_of(offset)
+            crate::id_of_subdevice!(self.vic1, offset)
         } else {
-            self.vic2.id_of(offset - 0x10000)
+            crate::id_of_subdevice!(self.vic2, offset - 0x10000)
         }
     }
 

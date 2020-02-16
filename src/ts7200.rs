@@ -7,8 +7,7 @@ use log::*;
 use crate::devices;
 use crate::devices::vic::Interrupt;
 use crate::memory::{
-    util::MemSniffer, MemAccess, MemAccessKind, MemAccessVal, MemException, MemExceptionKind,
-    MemResult, MemResultExt, Memory,
+    util::MemSniffer, MemAccess, MemAccessKind, MemAccessVal, MemException, MemResult, Memory,
 };
 
 // Values grafted from hardware. May vary a couple of bytes here and there, but
@@ -102,23 +101,37 @@ impl Ts7200 {
         })
     }
 
-    fn handle_mem_exception(cpu: &Cpu, e: MemException) -> Result<(), FatalError> {
+    fn handle_mem_exception(
+        cpu: &Cpu,
+        mem: &impl Memory,
+        exception: MemoryAdapterException,
+    ) -> Result<(), FatalError> {
+        let MemoryAdapterException {
+            addr,
+            kind,
+            mem_except,
+        } = exception;
+
         let ctx = format!(
-            "[pc {:#010x?}][{}]",
+            "[pc {:#010x?}][{}{}]",
             cpu.reg_get(0, reg::PC),
-            e.identifier()
+            mem.id(),
+            match mem.id_of(addr) {
+                Some(id) => format!(" > {}", id),
+                None => "".to_string(),
+            }
         );
 
-        use MemExceptionKind::*;
-        match e.kind() {
-            Unimplemented | Unexpected => return Err(FatalError::FatalMemException(e)),
+        use MemException::*;
+        match mem_except {
+            Unimplemented | Unexpected => return Err(FatalError::FatalMemException(mem_except)),
             StubRead(_) => warn!("{} stubbed read", ctx),
             StubWrite => warn!("{} stubbed write", ctx),
             Misaligned => {
                 // FIXME: Misaligned access (i.e: Data Abort) should be a CPU exception.
-                return Err(FatalError::FatalMemException(e));
+                return Err(FatalError::FatalMemException(mem_except));
             }
-            InvalidAccess => match e.access_kind().unwrap() {
+            InvalidAccess => match kind {
                 MemAccessKind::Read => error!("{} read from write-only register", ctx),
                 MemAccessKind::Write => error!("{} write to read-only register", ctx),
             },
@@ -177,7 +190,7 @@ impl Ts7200 {
                     let mut mem = MemoryAdapter::new(&mut self.devices);
                     self.cpu.cycle(&mut mem);
                     if let Some(e) = mem.take_exception() {
-                        Ts7200::handle_mem_exception(&self.cpu, e)?;
+                        Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
                     }
                     self.check_device_interrupts(BlockMode::NonBlocking);
                 }
@@ -257,7 +270,7 @@ impl Target for Ts7200 {
                 let mut mem = MemoryAdapter::new(&mut sniffer);
                 self.cpu.cycle(&mut mem);
                 if let Some(e) = mem.take_exception() {
-                    Ts7200::handle_mem_exception(&self.cpu, e)?;
+                    Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
                 }
                 self.check_device_interrupts(BlockMode::NonBlocking);
             }
@@ -396,8 +409,8 @@ macro_rules! ts7200_mmap {
             ($fn:ident, $ret:ty) => {
                 fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
                     match addr {
-                        $($start..=$end => self.$device.$fn(addr - $start).mem_ctx($start, self),)*
-                        _ => devices::UnmappedMemory.$fn(addr - 0).mem_ctx(0, self),
+                        $($start..=$end => self.$device.$fn(addr - $start),)*
+                        _ => devices::UnmappedMemory.$fn(addr - 0),
                     }
                 }
             };
@@ -407,8 +420,8 @@ macro_rules! ts7200_mmap {
             ($fn:ident, $val:ty) => {
                 fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
                     match addr {
-                        $($start..=$end => self.$device.$fn(addr - $start, val).mem_ctx($start, self),)*
-                        _ => devices::UnmappedMemory.$fn(addr - 0, val).mem_ctx(0, self),
+                        $($start..=$end => self.$device.$fn(addr - $start, val),)*
+                        _ => devices::UnmappedMemory.$fn(addr - 0, val),
                     }
                 }
             };
@@ -421,7 +434,7 @@ macro_rules! ts7200_mmap {
 
             fn id_of(&self, offset: u32) -> Option<String> {
                 match offset {
-                    $($start..=$end => self.$device.id_of(offset - $start),)*
+                    $($start..=$end => crate::id_of_subdevice!(self.$device, offset - $start),)*
                     _ => None,
                 }
             }
@@ -448,6 +461,12 @@ ts7200_mmap! {
     0x8093_0000..=0x8093_ffff => syscon,
 }
 
+struct MemoryAdapterException {
+    addr: u32,
+    kind: MemAccessKind,
+    mem_except: MemException,
+}
+
 /// The CPU's Memory interface expects all memory accesses to succeed (i.e:
 /// return _some_ sort of value). As such, there needs to be some sort of shim
 /// between the emulator's fallible [Memory] interface and the CPU's infallible
@@ -460,7 +479,7 @@ ts7200_mmap! {
 /// used to check if an exception occured.
 struct MemoryAdapter<'a, M: Memory> {
     mem: &'a mut M,
-    exception: Option<MemException>,
+    exception: Option<MemoryAdapterException>,
 }
 
 impl<'a, M: Memory> MemoryAdapter<'a, M> {
@@ -471,7 +490,7 @@ impl<'a, M: Memory> MemoryAdapter<'a, M> {
         }
     }
 
-    pub fn take_exception(&mut self) -> Option<MemException> {
+    pub fn take_exception(&mut self) -> Option<MemoryAdapterException> {
         self.exception.take()
     }
 }
@@ -483,10 +502,16 @@ macro_rules! impl_memadapter_r {
             match self.mem.$fn(addr) {
                 Ok(val) => val,
                 Err(e) => {
-                    self.exception = Some(e.with_access_kind(MemAccessKind::Read));
+                    self.exception = Some(
+                        MemoryAdapterException {
+                            addr,
+                            kind: MemAccessKind::Read,
+                            mem_except: e
+                        }
+                    );
                     // If it's a stubbed-read, pass through the stub
-                    match self.exception.as_ref().unwrap().kind() {
-                        MemExceptionKind::StubRead(v) => v as $ret,
+                    match e {
+                        MemException::StubRead(v) => v as $ret,
                         _ => 0x00 // contents of register undefined
                     }
                 }
@@ -502,7 +527,13 @@ macro_rules! impl_memadapter_w {
             match self.mem.$fn(addr, val) {
                 Ok(()) => {}
                 Err(e) => {
-                    self.exception = Some(e.with_access_kind(MemAccessKind::Write));
+                    self.exception = Some(
+                        MemoryAdapterException {
+                            addr,
+                            kind: MemAccessKind::Write,
+                            mem_except: e
+                        }
+                    );
                 }
             }
         }

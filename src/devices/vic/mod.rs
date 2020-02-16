@@ -4,7 +4,7 @@ pub mod vicmanager;
 pub use interrupts::Interrupt;
 pub use vicmanager::VicManager;
 
-use crate::memory::{MemResult, MemResultExt, Memory};
+use crate::memory::{MemResult, Memory};
 
 #[derive(Debug, Default)]
 struct VectorEntry {
@@ -151,7 +151,6 @@ impl Memory for Vic {
             0xfec => Ok(0x00),
             _ => crate::mem_unexpected!(),
         }
-        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
@@ -188,6 +187,5 @@ impl Memory for Vic {
             0xfec => crate::mem_invalid_access!("PeriphID3"),
             _ => crate::mem_unexpected!(),
         }
-        .mem_ctx(offset, self)
     }
 }

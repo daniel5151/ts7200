@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
-use crate::memory::{MemResult, MemResultExt, Memory};
+use crate::memory::{MemResult, Memory};
 
 use super::vic::Interrupt;
 
@@ -212,7 +212,6 @@ impl Memory for Timer {
             0x0C => crate::mem_invalid_access!("Clear"),
             _ => crate::mem_unexpected!(),
         }
-        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
@@ -273,6 +272,5 @@ impl Memory for Timer {
             0x0C => Ok(self.interrupt_bus.send((self.interrupt, false)).unwrap()),
             _ => crate::mem_unexpected!(),
         }
-        .mem_ctx(offset, self)
     }
 }
