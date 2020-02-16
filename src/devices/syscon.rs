@@ -42,37 +42,37 @@ impl Syscon {
     }
 }
 
-#[rustfmt::skip]
-const _: () = {
-// Address     | Name         | SW Locked | Type | Size | Description
-// ------------|--------------|-----------|------|------|-----------------------
-// 0x8093_0000 | PwrSts       | No        | R    | 32   | Power/state control state
-// 0x8093_0004 | PwrCnt       | No        | R/W  | 32   | Clock/Debug control status
-// 0x8093_0008 | Halt         | No        | R    | 32   | Reading this location enters Halt mode.
-// 0x8093_000C | Standby      | No        | R    | 32   | Reading this location enters Standby mode.
-// 0x8093_0018 | TEOI         | No        | W    | 32   | Write to clear Tick interrupt
-// 0x8093_001C | STFClr       | No        | W    | 32   | Write to clear CLDFLG, RSTFLG and WDTFLG.
-// 0x8093_0020 | ClkSet1      | No        | R/W  | 32   | Clock speed control 1
-// 0x8093_0024 | ClkSet2      | No        | R/W  | 32   | Clock speed control 2
-// 0x8093_0040 | ScratchReg0  | No        | R/W  | 32   | Scratch register 0
-// 0x8093_0044 | ScratchReg1  | No        | R/W  | 32   | Scratch register 1
-// 0x8093_0050 | APBWait      | No        | R/W  | 32   | APB wait
-// 0x8093_0054 | BusMstrArb   | No        | R/W  | 32   | Bus Master Arbitration
-// 0x8093_0058 | BootModeClr  | No        | W    | 32   | Boot Mode Clear register
-// 0x8093_0080 | DeviceCfg    | Yes       | R/W  | 32   | Device configuration
-// 0x8093_0084 | VidClkDiv    | Yes       | R/W  | 32   | Video Clock Divider
-// 0x8093_0088 | MIRClkDiv    | Yes       | R/W  | 32   | MIR Clock Divider, divides MIR clock for MIR IrDA
-// 0x8093_008C | I2SClkDiv    | Yes       | R/W  | 32   | I2S Audio Clock Divider
-// 0x8093_0090 | KeyTchClkDiv | Yes       | R/W  | 32   | Keyscan/Touch Clock Divider
-// 0x8093_0094 | ChipID       | Yes       | R/W  | 32   | Chip ID Register
-// 0x8093_009C | SysCfg       | Yes       | R/W  | 32   | System Configuration
-// 0x8093_00A0 | -            | -         | -    | -    | Reserved
-// 0x8093_00C0 | SysSWLock    | No        | R/W  | 1    | bit Software Lock Register
-};
-
 impl Memory for Syscon {
     fn device(&self) -> &'static str {
         "System Controller"
+    }
+
+    fn id_of(&self, offset: u32) -> Option<String> {
+        let reg = match offset {
+            0x00 => "PwrSts",
+            0x04 => "PwrCnt",
+            0x08 => "Halt",
+            0x0C => "Standby",
+            0x18 => "TEOI",
+            0x1C => "STFClr",
+            0x20 => "ClkSet1",
+            0x24 => "ClkSet2",
+            0x40 => "ScratchReg0",
+            0x44 => "ScratchReg1",
+            0x50 => "APBWait",
+            0x54 => "BusMstrArb",
+            0x58 => "BootModeClr",
+            0x80 => "DeviceCfg",
+            0x84 => "VidClkDiv",
+            0x88 => "MIRClkDiv",
+            0x8C => "I2SClkDiv",
+            0x90 => "KeyTchClkDiv",
+            0x94 => "ChipID",
+            0x9C => "SysCfg",
+            0xC0 => "SysSWLock",
+            _ => return None,
+        };
+        Some(reg.to_string())
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

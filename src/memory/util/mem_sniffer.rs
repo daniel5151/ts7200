@@ -45,6 +45,10 @@ impl<'a, M: Memory, F: FnMut(MemAccess)> Memory for MemSniffer<'a, M, F> {
         self.mem.label()
     }
 
+    fn id_of(&self, offset: u32) -> Option<String> {
+        self.mem.id_of(offset)
+    }
+
     impl_memsniff_r!(r8, u8);
     impl_memsniff_r!(r16, u16);
     impl_memsniff_r!(r32, u32);

@@ -12,7 +12,7 @@ pub use exception::{MemException, MemExceptionKind, MemResult, MemResultExt};
 /// Default implementations for 8-bit and 16-bit read/write return a
 /// [MemException::Misaligned] if the address isn't aligned properly.
 pub trait Memory {
-    /// The name of the emulated device.
+    /// The name of the emulated device
     fn device(&self) -> &'static str;
 
     /// A descriptive string for a particular instance of the device (if
@@ -22,12 +22,15 @@ pub trait Memory {
     }
 
     /// Returns the string "<device>:<label>"
-    fn identifier(&self) -> String {
+    fn id(&self) -> String {
         match self.label() {
             Some(label) => format!("{}:{}", self.device(), label),
             None => self.device().to_string(),
         }
     }
+
+    /// Get the id of the device at the provided offset
+    fn id_of(&self, offset: u32) -> Option<String>;
 
     /// Read a 32 bit value at a given offset
     fn r32(&mut self, offset: u32) -> MemResult<u32>;
@@ -38,7 +41,7 @@ pub trait Memory {
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         if offset & 0x3 != 0 {
             Err(MemException::new(
-                self.identifier(),
+                self.id(),
                 offset,
                 MemExceptionKind::Misaligned,
             ))
@@ -51,7 +54,7 @@ pub trait Memory {
     fn r16(&mut self, offset: u32) -> MemResult<u16> {
         if offset & 0x3 != 0 {
             Err(MemException::new(
-                self.identifier(),
+                self.id(),
                 offset,
                 MemExceptionKind::Misaligned,
             ))
@@ -64,7 +67,7 @@ pub trait Memory {
     fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
         if offset & 0x3 != 0 {
             Err(MemException::new(
-                self.identifier(),
+                self.id(),
                 offset,
                 MemExceptionKind::Misaligned,
             ))
@@ -77,7 +80,7 @@ pub trait Memory {
     fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
         if offset & 0x3 != 0 {
             Err(MemException::new(
-                self.identifier(),
+                self.id(),
                 offset,
                 MemExceptionKind::Misaligned,
             ))
@@ -94,6 +97,10 @@ impl Memory for Box<dyn Memory> {
 
     fn label(&self) -> Option<&str> {
         (**self).label()
+    }
+
+    fn id_of(&self, offset: u32) -> Option<String> {
+        (**self).id_of(offset)
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

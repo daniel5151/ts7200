@@ -419,6 +419,13 @@ macro_rules! ts7200_mmap {
                 "Ts7200"
             }
 
+            fn id_of(&self, offset: u32) -> Option<String> {
+                match offset {
+                    $($start..=$end => self.$device.id_of(offset - $start),)*
+                    _ => None,
+                }
+            }
+
             impl_ts7200_memory_r!(r8, u8);
             impl_ts7200_memory_r!(r16, u16);
             impl_ts7200_memory_r!(r32, u32);

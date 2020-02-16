@@ -543,6 +543,23 @@ impl Memory for Uart {
         Some(self.label)
     }
 
+    fn id_of(&self, offset: u32) -> Option<String> {
+        let reg = match offset {
+            0x00 => "Data",
+            0x04 => "RXSts",
+            0x08 => "LinCtrlHigh",
+            0x0C => "LinCtrlMid",
+            0x10 => "LinCtrlLow",
+            0x14 => "Ctrl",
+            0x18 => "Flag",
+            0x1C => "IntIDIntClr",
+            0x20 => "IrLowPwrCntr",
+            0x28 => "DMACtrl",
+            _ => return None,
+        };
+        Some(reg.to_string())
+    }
+
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         let mut state = self.state.lock().unwrap();
         match offset {

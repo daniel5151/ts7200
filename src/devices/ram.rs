@@ -39,6 +39,10 @@ impl Memory for Ram {
         "Ram"
     }
 
+    fn id_of(&self, _offset: u32) -> Option<String> {
+        None
+    }
+
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         let offset = offset as usize;
         Ok(self.mem[offset])

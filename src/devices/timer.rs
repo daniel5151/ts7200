@@ -182,6 +182,17 @@ impl Memory for Timer {
         Some(self.label)
     }
 
+    fn id_of(&self, offset: u32) -> Option<String> {
+        let reg = match offset {
+            0x00 => "Load",
+            0x04 => "Value",
+            0x08 => "Control",
+            0x0C => "Clear",
+            _ => return None,
+        };
+        Some(reg.to_string())
+    }
+
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         self.update_regs();
 

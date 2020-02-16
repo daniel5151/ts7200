@@ -87,7 +87,7 @@ pub trait MemResultExt {
 impl<T> MemResultExt for MemResult<T> {
     fn mem_ctx(self, base_offset: u32, obj: &impl Memory) -> Self {
         self.map_err(|mut exception| {
-            exception.identifier = format!("{} > {}", obj.identifier(), exception.identifier);
+            exception.identifier = format!("{} > {}", obj.id(), exception.identifier);
             exception.offset += base_offset;
             exception
         })

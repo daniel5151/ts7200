@@ -99,6 +99,27 @@ impl Memory for Vic {
         Some(self.label)
     }
 
+    fn id_of(&self, offset: u32) -> Option<String> {
+        let reg = match offset {
+            0x00 => "IRQStatus",
+            0x04 => "FIQStatus",
+            0x08 => "RawIntr",
+            0x0c => "IntSelect",
+            0x10 => "IntEnable",
+            0x14 => "IntEnClear",
+            0x18 => "SoftInt",
+            0x1c => "SoftIntClear",
+            0x20 => "Protection",
+            0x30 => "VectAddr",
+            0x34 => "DefVectAddr",
+            0x100..=0x13c => "VectAddrX",
+            0x200..=0x23c => "VectCntlX",
+            0xfe0..=0xfe4 => "PeriphIDX",
+            _ => return None,
+        };
+        Some(reg.to_string())
+    }
+
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             0x00 => Ok(self.enabled_active_interrupts() & !self.select),

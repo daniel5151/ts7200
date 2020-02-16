@@ -22,16 +22,20 @@ impl Memory for UnmappedMemory {
         "<unmapped memory>"
     }
 
+    fn id_of(&self, _offset: u32) -> Option<String> {
+        None
+    }
+
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         Err(crate::memory::MemException::new(
-            self.identifier(),
+            self.id(),
             offset,
             crate::memory::MemExceptionKind::Unexpected,
         ))
     }
     fn w32(&mut self, offset: u32, _: u32) -> MemResult<()> {
         Err(crate::memory::MemException::new(
-            self.identifier(),
+            self.id(),
             offset,
             crate::memory::MemExceptionKind::Unexpected,
         ))
