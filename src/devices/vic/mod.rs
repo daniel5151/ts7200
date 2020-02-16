@@ -91,12 +91,12 @@ impl Vic {
 }
 
 impl Memory for Vic {
-    fn label(&self) -> Option<&str> {
-        Some(self.label)
-    }
-
     fn device(&self) -> &'static str {
         "VIC"
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some(self.label)
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

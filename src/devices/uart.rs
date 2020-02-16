@@ -535,12 +535,12 @@ impl Uart {
 }
 
 impl Memory for Uart {
-    fn label(&self) -> Option<&str> {
-        Some(self.label)
-    }
-
     fn device(&self) -> &'static str {
         "UART"
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some(self.label)
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

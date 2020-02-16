@@ -11,7 +11,6 @@ use crate::memory::{MemAccess, MemResult, Memory};
 pub struct MemLogger<M: Memory>(M);
 
 impl<M: Memory> MemLogger<M> {
-    #[allow(dead_code)]
     pub fn new(memory: M) -> MemLogger<M> {
         MemLogger(memory)
     }

@@ -174,12 +174,12 @@ impl Timer {
 }
 
 impl Memory for Timer {
-    fn label(&self) -> Option<&str> {
-        Some(self.label)
-    }
-
     fn device(&self) -> &'static str {
         "Timer"
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some(self.label)
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

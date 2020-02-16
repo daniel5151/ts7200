@@ -5,7 +5,6 @@
 
 pub mod devices;
 pub mod io;
-pub mod macros;
 pub mod memory;
 pub mod ts7200;
 
