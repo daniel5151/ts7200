@@ -73,6 +73,7 @@ impl Memory for Ram {
                     "r8 from (partially) uninitialized RAM: {}",
                     self.addr_as_str(offset, 1)
                 ),
+                severity: log::Level::Warn,
                 stub_val: Some(val as u32),
             });
         }
@@ -88,6 +89,7 @@ impl Memory for Ram {
                     "r16 from (partially) uninitialized RAM: {}",
                     self.addr_as_str(offset, 2)
                 ),
+                severity: log::Level::Warn,
                 stub_val: Some(val as u32),
             });
         }
@@ -103,6 +105,7 @@ impl Memory for Ram {
                     "r32 from (partially) uninitialized RAM: {}",
                     self.addr_as_str(offset, 4)
                 ),
+                severity: log::Level::Warn,
                 stub_val: Some(val as u32),
             });
         }

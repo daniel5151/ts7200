@@ -19,5 +19,9 @@ pub enum MemException {
     /// Attempted to read a write-only register / write to a read-only register
     InvalidAccess,
     /// Device Contract Violation
-    ContractViolation { msg: String, stub_val: Option<u32> },
+    ContractViolation {
+        msg: String,
+        severity: log::Level,
+        stub_val: Option<u32>,
+    },
 }

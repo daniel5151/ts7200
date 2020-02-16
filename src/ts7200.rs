@@ -150,7 +150,7 @@ impl Ts7200 {
                 MemAccessKind::Read => error!("{} read from write-only register", ctx),
                 MemAccessKind::Write => error!("{} write to read-only register", ctx),
             },
-            ContractViolation { msg, .. } => error!("{} {}", ctx, msg),
+            ContractViolation { msg, severity, .. } => log!(severity, "{} {}", ctx, msg),
         }
 
         Ok(())
