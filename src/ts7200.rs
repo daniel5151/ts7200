@@ -122,7 +122,10 @@ impl Ts7200 {
             None => "<root>".to_string(),
         };
 
-        let ctx = format!("[pc {:#010x?}][{}]", pc, in_mem_space_of);
+        let ctx = format!(
+            "[pc {:#010x?}][addr {:#010x?}][{}]",
+            pc, addr, in_mem_space_of
+        );
 
         use MemException::*;
         match mem_except {
@@ -147,6 +150,7 @@ impl Ts7200 {
                 MemAccessKind::Read => error!("{} read from write-only register", ctx),
                 MemAccessKind::Write => error!("{} write to read-only register", ctx),
             },
+            ContractViolation { msg, .. } => error!("{} {}", ctx, msg),
         }
 
         Ok(())
@@ -364,8 +368,7 @@ impl Target for Ts7200 {
                 Ok(val) => push_byte(val),
                 Err(e) => {
                     warn!("gdbstub read_addrs memory exception: {:?}", e);
-                    // non-ram accesses are currently masked out.
-                    unreachable!("Memory accesses shouldn't throw any errors!")
+                    push_byte(0x00)
                 }
             };
         }
@@ -514,6 +517,17 @@ macro_rules! impl_memadapter_r {
             match self.mem.$fn(addr) {
                 Ok(val) => val,
                 Err(e) => {
+                    // If it's a stubbed-read, pass through the stubbed value
+                    let ret =  match e {
+                        MemException::StubRead(v) => v as $ret,
+                        MemException::ContractViolation{ stub_val, .. } => {
+                            match stub_val {
+                                Some(v) => v as $ret,
+                                None => 0x00
+                            }
+                        },
+                        _ => 0x00 // contents of register undefined
+                    };
                     self.exception = Some(
                         MemoryAdapterException {
                             addr,
@@ -521,11 +535,7 @@ macro_rules! impl_memadapter_r {
                             mem_except: e
                         }
                     );
-                    // If it's a stubbed-read, pass through the stub
-                    match e {
-                        MemException::StubRead(v) => v as $ret,
-                        _ => 0x00 // contents of register undefined
-                    }
+                    ret
                 }
             }
         }

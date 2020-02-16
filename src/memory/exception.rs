@@ -1,7 +1,7 @@
 pub type MemResult<T> = Result<T, MemException>;
 
 /// Denotes some sort of exception stemming from a memory access.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum MemException {
     // -- Internal Emulator Errors -- //
     /// Memory location that shouldn't have been accessed
@@ -18,4 +18,6 @@ pub enum MemException {
     Misaligned,
     /// Attempted to read a write-only register / write to a read-only register
     InvalidAccess,
+    /// Device Contract Violation
+    ContractViolation { msg: String, stub_val: Option<u32> },
 }
