@@ -379,8 +379,9 @@ impl Target for Ts7200 {
 
             match self.devices.r8(addr) {
                 Ok(val) => push_byte(val),
-                Err(e) => {
-                    warn!("gdbstub read_addrs memory exception: {:?}", e);
+                Err(_) => {
+                    // the only errors that RAM emits are accessing uninitialized memory, which gdb
+                    // will do _a lot_. We'll just squelch these errors...
                     push_byte(0x00)
                 }
             };
