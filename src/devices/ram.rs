@@ -114,14 +114,30 @@ impl Memory for Ram {
 
     fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
         let offset = offset as usize;
-        self.initialized[offset] = true;
+
+        // gcc likes to emit 8-bit store instructions, but then read the value via 32
+        // bit read instructions. To squelch these errors, word-aligned writes are
+        // treated as through they've initialized the entire word.
+        if offset & 0x3 == 0 {
+            self.initialized[offset..offset + 4].copy_from_slice(&[true; 4]);
+        } else {
+            self.initialized[offset] = true;
+        }
+
         self.mem[offset] = val;
         Ok(())
     }
 
     fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
         let offset = offset as usize;
-        self.initialized[offset..offset + 2].copy_from_slice(&[true; 2]);
+
+        // see comment in w8
+        if offset & 0x3 == 0 {
+            self.initialized[offset..offset + 4].copy_from_slice(&[true; 4]);
+        } else {
+            self.initialized[offset..offset + 2].copy_from_slice(&[true; 2]);
+        }
+
         LittleEndian::write_u16(&mut self.mem[offset..offset + 2], val);
         Ok(())
     }
