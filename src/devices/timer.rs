@@ -1,6 +1,7 @@
-use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+use crossbeam_channel as chan;
 
 use crate::memory::{MemResult, MemResultExt, Memory};
 
@@ -34,17 +35,19 @@ enum InterrupterMsg {
 }
 
 fn spawn_interrupter_thread(
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    label: &'static str,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
-) -> (JoinHandle<()>, mpsc::Sender<InterrupterMsg>) {
-    let (tx, rx) = mpsc::channel::<InterrupterMsg>();
-    let handle = thread::spawn(move || {
+) -> (JoinHandle<()>, chan::Sender<InterrupterMsg>) {
+    let (tx, rx) = chan::unbounded::<InterrupterMsg>();
+    let thread = move || {
         let mut next: Option<Instant> = None;
         let mut period = Default::default();
         loop {
             let timeout = match next {
                 Some(next) => next.saturating_duration_since(Instant::now()),
-                None => Duration::from_secs(std::u64::MAX),
+                // XXX: Not technically correct, but this is a long enough time
+                None => Duration::from_secs(std::u32::MAX as _),
             };
 
             match rx.recv_timeout(timeout) {
@@ -56,11 +59,11 @@ fn spawn_interrupter_thread(
                     period = new_period;
                 }
                 Ok(InterrupterMsg::Disabled) => next = None,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(chan::RecvTimeoutError::Disconnected) => {
                     // Sender exited
                     return;
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(chan::RecvTimeoutError::Timeout) => {
                     // Interrupt!
                     interrupt_bus.send((interrupt, true)).unwrap();
                     next = Some(
@@ -69,13 +72,21 @@ fn spawn_interrupter_thread(
                 }
             }
         }
-    });
+    };
+
+    let handle = thread::Builder::new()
+        .name(format!("{} | Timer Interrupter", label))
+        .spawn(thread)
+        .unwrap();
+
     (handle, tx)
 }
 
-/// Timer module
+/// 32bit timer device with configurable emulated wrap value (for emulating 16
+/// bit timers as well).
 ///
 /// As described in section 18 of the EP93xx User's Guide
+#[derive(Debug)]
 pub struct Timer {
     label: &'static str,
     // registers
@@ -89,27 +100,21 @@ pub struct Timer {
     last_time: Instant,
     microticks: u32,
 
-    interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
     interrupt: Interrupt,
 
-    interrupter_tx: mpsc::Sender<InterrupterMsg>,
-}
-
-impl std::fmt::Debug for Timer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Timer").finish()
-    }
+    interrupter_tx: chan::Sender<InterrupterMsg>,
 }
 
 impl Timer {
     /// Create a new Timer
     pub fn new(
         label: &'static str,
-        interrupt_bus: mpsc::Sender<(Interrupt, bool)>,
+        interrupt_bus: chan::Sender<(Interrupt, bool)>,
         interrupt: Interrupt,
         bits: usize,
     ) -> Timer {
-        let (_, interrupter_tx) = spawn_interrupter_thread(interrupt_bus.clone(), interrupt);
+        let (_, interrupter_tx) = spawn_interrupter_thread(label, interrupt_bus.clone(), interrupt);
         Timer {
             label,
             loadval: None,

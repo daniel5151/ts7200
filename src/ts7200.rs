@@ -1,7 +1,7 @@
 use std::io::Read;
-use std::sync::mpsc;
 
 use arm7tdmi_rs::{reg, Cpu, Exception, Memory as ArmMemory};
+use crossbeam_channel as chan;
 use log::*;
 
 use crate::devices;
@@ -22,7 +22,7 @@ pub enum FatalError {
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
-enum CheckException {
+enum BlockMode {
     Blocking,
     NonBlocking,
 }
@@ -33,7 +33,7 @@ pub struct Ts7200 {
     hle: bool,
     cpu: Cpu,
     devices: Ts7200Bus,
-    interrupt_bus: mpsc::Receiver<(Interrupt, bool)>,
+    interrupt_bus: chan::Receiver<(Interrupt, bool)>,
 }
 
 impl Ts7200 {
@@ -62,7 +62,7 @@ impl Ts7200 {
         ]);
 
         // create the interrupt bus
-        let (interrupt_bus_tx, interrupt_bus_rx) = mpsc::channel();
+        let (interrupt_bus_tx, interrupt_bus_rx) = chan::unbounded();
 
         // initialize system devices (in HLE state)
         let mut bus = Ts7200Bus::new_hle(interrupt_bus_tx);
@@ -127,21 +127,26 @@ impl Ts7200 {
         Ok(())
     }
 
-    fn check_exception(&mut self, blocking: CheckException) {
-        let (interrupt, state) = match blocking {
-            CheckException::Blocking => self.interrupt_bus.recv().unwrap(),
-            CheckException::NonBlocking => match self.interrupt_bus.try_recv() {
-                Ok(t) => t,
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => panic!(),
-            },
-        };
-
-        if state {
-            self.devices.vicmgr.assert_interrupt(interrupt)
-        } else {
-            self.devices.vicmgr.clear_interrupt(interrupt)
+    fn check_device_interrupts(&mut self, blocking: BlockMode) {
+        macro_rules! check_device_interrupts {
+            ($iter:expr) => {{
+                for (interrupt, state) in $iter {
+                    if state {
+                        self.devices.vicmgr.assert_interrupt(interrupt)
+                    } else {
+                        self.devices.vicmgr.clear_interrupt(interrupt)
+                    }
+                }
+            }};
         }
+
+        match blocking {
+            BlockMode::NonBlocking => check_device_interrupts!(self.interrupt_bus.try_iter()),
+            BlockMode::Blocking => {
+                check_device_interrupts!(std::iter::once(self.interrupt_bus.recv().unwrap())
+                    .chain(self.interrupt_bus.try_iter()))
+            }
+        };
 
         if self.devices.vicmgr.fiq() {
             self.cpu.exception(Exception::FastInterrupt);
@@ -174,10 +179,10 @@ impl Ts7200 {
                     if let Some(e) = mem.take_exception() {
                         Ts7200::handle_mem_exception(&self.cpu, e)?;
                     }
-                    self.check_exception(CheckException::NonBlocking);
+                    self.check_device_interrupts(BlockMode::NonBlocking);
                 }
                 PowerState::Halt => {
-                    self.check_exception(CheckException::Blocking);
+                    self.check_device_interrupts(BlockMode::Blocking);
                     if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                         self.devices.syscon.set_run_mode();
                     };
@@ -254,12 +259,12 @@ impl Target for Ts7200 {
                 if let Some(e) = mem.take_exception() {
                     Ts7200::handle_mem_exception(&self.cpu, e)?;
                 }
-                self.check_exception(CheckException::NonBlocking);
+                self.check_device_interrupts(BlockMode::NonBlocking);
             }
             PowerState::Halt => {
                 // unlike `run`, we do _not_ want to block the gdb thread waiting
                 // for an exception.
-                self.check_exception(CheckException::NonBlocking);
+                self.check_device_interrupts(BlockMode::NonBlocking);
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
                 };
@@ -369,7 +374,8 @@ pub struct Ts7200Bus {
 }
 
 impl Ts7200Bus {
-    fn new_hle(interrupt_bus: mpsc::Sender<(Interrupt, bool)>) -> Ts7200Bus {
+    #[allow(clippy::redundant_clone)] // Makes the code cleaner in this case
+    fn new_hle(interrupt_bus: chan::Sender<(Interrupt, bool)>) -> Ts7200Bus {
         use devices::*;
         Ts7200Bus {
             sdram: Ram::new(32 * 1024 * 1024), // 32 MB
@@ -377,8 +383,8 @@ impl Ts7200Bus {
             timer1: Timer::new("timer1", interrupt_bus.clone(), Interrupt::Tc1Ui, 16),
             timer2: Timer::new("timer2", interrupt_bus.clone(), Interrupt::Tc2Ui, 16),
             timer3: Timer::new("timer3", interrupt_bus.clone(), Interrupt::Tc3Ui, 32),
-            uart1: Uart::new_hle("uart1"),
-            uart2: Uart::new_hle("uart2"),
+            uart1: Uart::new_hle("uart1", interrupt_bus.clone(), uart::interrupts::UART1),
+            uart2: Uart::new_hle("uart2", interrupt_bus.clone(), uart::interrupts::UART2),
             vicmgr: vic::VicManager::new(),
         }
     }

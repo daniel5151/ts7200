@@ -62,7 +62,7 @@ impl Vic {
     }
 
     fn isr_address(&self) -> u32 {
-        if self.fiq() || !self.fiq() {
+        if self.fiq() || !self.irq() {
             self.default_isr
         } else {
             let irqs = self.enabled_active_interrupts() & !self.select;
@@ -101,8 +101,8 @@ impl Memory for Vic {
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
-            0x00 => Ok(self.rawstatus() & !self.select),
-            0x04 => Ok(self.rawstatus() & self.select),
+            0x00 => Ok(self.enabled_active_interrupts() & !self.select),
+            0x04 => Ok(self.enabled_active_interrupts() & self.select),
             0x08 => Ok(self.rawstatus()),
             0x0c => Ok(self.select),
             0x10 => Ok(self.enabled),
@@ -142,7 +142,10 @@ impl Memory for Vic {
             0x1c => Ok(self.software_status &= !val),
             // TODO: enforce that VIC Protection bit must be accessed in priveleged mode
             0x20 => crate::mem_stub!("PROTECTION"),
-            0x30 => crate::mem_stub!("VECTADDR"),
+            // Writing to this signals to the Vic that the interrupt
+            // has been serviced.  We don't implement the behaviour
+            // that cares about that for now, so no-op.
+            0x30 => Ok(()),
             0x34 => Ok(self.default_isr = val),
             0x100..=0x13c => {
                 let index = ((offset - 0x100) / 4) as usize;
