@@ -55,6 +55,14 @@ impl Memory for VicManager {
         "VicManager"
     }
 
+    fn id_of(&self, offset: u32) -> Option<String> {
+        if offset < 0x10000 {
+            crate::id_of_subdevice!(self.vic1, offset)
+        } else {
+            crate::id_of_subdevice!(self.vic2, offset - 0x10000)
+        }
+    }
+
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             0x30 => {

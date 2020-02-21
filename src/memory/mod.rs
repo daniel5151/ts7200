@@ -1,32 +1,36 @@
+pub mod macros;
 pub mod util;
 
 mod access;
 mod exception;
 
 pub use access::{MemAccess, MemAccessKind, MemAccessVal};
-pub use exception::{MemException, MemExceptionKind, MemResult, MemResultExt};
+pub use exception::{MemException, MemResult};
 
 /// Common memory trait used throughout the emulator.
 ///
 /// Default implementations for 8-bit and 16-bit read/write return a
 /// [MemException::Misaligned] if the address isn't aligned properly.
 pub trait Memory {
-    /// The underlying device type
+    /// The name of the emulated device
     fn device(&self) -> &'static str;
 
-    /// An optional named identifier for the memory region
+    /// A descriptive string for a particular instance of the device (if
+    /// applicable)
     fn label(&self) -> Option<&str> {
         None
     }
 
-    /// Returns "<device>:<label>", omitting the ":<label>" if none was given
-    fn identifier(&self) -> String {
-        format!(
-            "{}{}",
-            self.device(),
-            self.label().map(|s| format!(":{}", s)).unwrap_or_default()
-        )
+    /// Returns the string "<device>:<label>"
+    fn id(&self) -> String {
+        match self.label() {
+            Some(label) => format!("{}:{}", self.device(), label),
+            None => self.device().to_string(),
+        }
     }
+
+    /// Get the id of the device at the provided offset
+    fn id_of(&self, offset: u32) -> Option<String>;
 
     /// Read a 32 bit value at a given offset
     fn r32(&mut self, offset: u32) -> MemResult<u32>;
@@ -36,52 +40,36 @@ pub trait Memory {
     /// Read a 8 bit value at a given offset
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::MemException::new(
-                self.identifier(),
-                offset,
-                crate::memory::MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
-            Memory::r32(self, offset).map(|v| v as u8)
+            self.r32(offset).map(|v| v as u8)
         }
     }
 
     /// Read a 16 bit value at a given offset
     fn r16(&mut self, offset: u32) -> MemResult<u16> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::MemException::new(
-                self.identifier(),
-                offset,
-                crate::memory::MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
-            Memory::r32(self, offset).map(|v| v as u16)
+            self.r32(offset).map(|v| v as u16)
         }
     }
 
     /// Write a 8 bit value to the given offset
     fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::MemException::new(
-                self.identifier(),
-                offset,
-                crate::memory::MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
-            Memory::w32(self, offset, val as u32)
+            self.w32(offset, val as u32)
         }
     }
 
     /// Write a 16 bit value to the given offset
     fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
         if offset & 0x3 != 0 {
-            Err(crate::memory::MemException::new(
-                self.identifier(),
-                offset,
-                crate::memory::MemExceptionKind::Misaligned,
-            ))
+            Err(MemException::Misaligned)
         } else {
-            Memory::w32(self, offset, val as u32)
+            self.w32(offset, val as u32)
         }
     }
 }
@@ -93,6 +81,10 @@ impl Memory for Box<dyn Memory> {
 
     fn label(&self) -> Option<&str> {
         (**self).label()
+    }
+
+    fn id_of(&self, offset: u32) -> Option<String> {
+        (**self).id_of(offset)
     }
 
     fn r32(&mut self, offset: u32) -> MemResult<u32> {

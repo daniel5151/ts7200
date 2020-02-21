@@ -11,7 +11,6 @@ use crate::memory::{MemAccess, MemResult, Memory};
 pub struct MemLogger<M: Memory>(M);
 
 impl<M: Memory> MemLogger<M> {
-    #[allow(dead_code)]
     pub fn new(memory: M) -> MemLogger<M> {
         MemLogger(memory)
     }
@@ -35,7 +34,7 @@ macro_rules! impl_memlogger_r {
     ($fn:ident, $ret:ty) => {
         fn $fn(&mut self, offset: u32) -> MemResult<$ret> {
             let val = (self.0).$fn(offset)?;
-            info!("[{}] {}", self.identifier(), MemAccess::$fn(offset, val));
+            info!("[{}] {}", self.id(), MemAccess::$fn(offset, val));
             Ok(val)
         }
     };
@@ -44,7 +43,7 @@ macro_rules! impl_memlogger_r {
 macro_rules! impl_memlogger_w {
     ($fn:ident, $val:ty) => {
         fn $fn(&mut self, offset: u32, val: $val) -> MemResult<()> {
-            info!("[{}] {}", self.identifier(), MemAccess::$fn(offset, val));
+            info!("[{}] {}", self.id(), MemAccess::$fn(offset, val));
             (self.0).$fn(offset, val)?;
             Ok(())
         }
@@ -58,6 +57,10 @@ impl<M: Memory> Memory for MemLogger<M> {
 
     fn label(&self) -> Option<&str> {
         self.0.label()
+    }
+
+    fn id_of(&self, offset: u32) -> Option<String> {
+        self.0.id_of(offset)
     }
 
     impl_memlogger_r!(r8, u8);

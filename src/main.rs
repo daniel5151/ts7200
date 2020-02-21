@@ -5,7 +5,6 @@
 
 pub mod devices;
 pub mod io;
-pub mod macros;
 pub mod memory;
 pub mod ts7200;
 
@@ -101,10 +100,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Err(fatal_error) = system_result {
-        eprintln!("Fatal Error!");
+        eprintln!("Fatal Error! Dumping system state...");
         eprintln!("============");
         eprintln!("{:#010x?}", system);
-        eprintln!("{:#010x?}", fatal_error);
+        eprintln!("Cause: {:#010x?}", fatal_error);
         eprintln!("============");
         return Err("Fatal Error!".into());
     }

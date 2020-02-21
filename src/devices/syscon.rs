@@ -1,4 +1,4 @@
-use crate::memory::{MemResult, MemResultExt, Memory};
+use crate::memory::{MemException::*, MemResult, Memory};
 
 /// EP9302 Power States (see page 5-10)
 #[derive(Debug, Clone, Copy)]
@@ -42,50 +42,53 @@ impl Syscon {
     }
 }
 
-#[rustfmt::skip]
-const _: () = {
-// Address     | Name         | SW Locked | Type | Size | Description
-// ------------|--------------|-----------|------|------|-----------------------
-// 0x8093_0000 | PwrSts       | No        | R    | 32   | Power/state control state
-// 0x8093_0004 | PwrCnt       | No        | R/W  | 32   | Clock/Debug control status
-// 0x8093_0008 | Halt         | No        | R    | 32   | Reading this location enters Halt mode.
-// 0x8093_000C | Standby      | No        | R    | 32   | Reading this location enters Standby mode.
-// 0x8093_0018 | TEOI         | No        | W    | 32   | Write to clear Tick interrupt
-// 0x8093_001C | STFClr       | No        | W    | 32   | Write to clear CLDFLG, RSTFLG and WDTFLG.
-// 0x8093_0020 | ClkSet1      | No        | R/W  | 32   | Clock speed control 1
-// 0x8093_0024 | ClkSet2      | No        | R/W  | 32   | Clock speed control 2
-// 0x8093_0040 | ScratchReg0  | No        | R/W  | 32   | Scratch register 0
-// 0x8093_0044 | ScratchReg1  | No        | R/W  | 32   | Scratch register 1
-// 0x8093_0050 | APBWait      | No        | R/W  | 32   | APB wait
-// 0x8093_0054 | BusMstrArb   | No        | R/W  | 32   | Bus Master Arbitration
-// 0x8093_0058 | BootModeClr  | No        | W    | 32   | Boot Mode Clear register
-// 0x8093_0080 | DeviceCfg    | Yes       | R/W  | 32   | Device configuration
-// 0x8093_0084 | VidClkDiv    | Yes       | R/W  | 32   | Video Clock Divider
-// 0x8093_0088 | MIRClkDiv    | Yes       | R/W  | 32   | MIR Clock Divider, divides MIR clock for MIR IrDA
-// 0x8093_008C | I2SClkDiv    | Yes       | R/W  | 32   | I2S Audio Clock Divider
-// 0x8093_0090 | KeyTchClkDiv | Yes       | R/W  | 32   | Keyscan/Touch Clock Divider
-// 0x8093_0094 | ChipID       | Yes       | R/W  | 32   | Chip ID Register
-// 0x8093_009C | SysCfg       | Yes       | R/W  | 32   | System Configuration
-// 0x8093_00A0 | -            | -         | -    | -    | Reserved
-// 0x8093_00C0 | SysSWLock    | No        | R/W  | 1    | bit Software Lock Register
-};
-
 impl Memory for Syscon {
     fn device(&self) -> &'static str {
         "System Controller"
     }
 
+    fn id_of(&self, offset: u32) -> Option<String> {
+        let reg = match offset {
+            0x00 => "PwrSts",
+            0x04 => "PwrCnt",
+            0x08 => "Halt",
+            0x0C => "Standby",
+            0x18 => "TEOI",
+            0x1C => "STFClr",
+            0x20 => "ClkSet1",
+            0x24 => "ClkSet2",
+            0x40 => "ScratchReg0",
+            0x44 => "ScratchReg1",
+            0x50 => "APBWait",
+            0x54 => "BusMstrArb",
+            0x58 => "BootModeClr",
+            0x80 => "DeviceCfg",
+            0x84 => "VidClkDiv",
+            0x88 => "MIRClkDiv",
+            0x8C => "I2SClkDiv",
+            0x90 => "KeyTchClkDiv",
+            0x94 => "ChipID",
+            0x9C => "SysCfg",
+            0xC0 => "SysSWLock",
+            _ => return None,
+        };
+        Some(reg.to_string())
+    }
+
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
-            0x00 => crate::mem_unimpl!("PwrSts"),
-            0x04 => crate::mem_unimpl!("PwrCnt"),
+            0x00 => Err(Unimplemented),
+            0x04 => Err(Unimplemented),
             0x08 => {
                 if self.device_cfg & 1 == 1 {
                     self.power_state = PowerState::Halt;
                     Ok(0) // doesn't matter
                 } else {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("Cannot enter Halt mode if SHena != 1 in syscon DeviceCfg");
+                    Err(ContractViolation {
+                        msg: "Cannot enter Halt mode if SHena != 1 in syscon DeviceCfg".to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    })
                 }
             }
             0x0C => {
@@ -93,26 +96,30 @@ impl Memory for Syscon {
                     self.power_state = PowerState::Standby;
                     Ok(0) // doesn't matter
                 } else {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("Cannot enter Standby mode if SHena != 1 in syscon DeviceCfg");
+                    Err(ContractViolation {
+                        msg: "Cannot enter Standby mode if SHena != 1 in syscon DeviceCfg"
+                            .to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    })
                 }
             }
-            0x18 => crate::mem_unimpl!("TEOI"),
-            0x1C => crate::mem_unimpl!("STFClr"),
-            0x20 => crate::mem_unimpl!("ClkSet1"),
-            0x24 => crate::mem_unimpl!("ClkSet2"),
+            0x18 => Err(Unimplemented),
+            0x1C => Err(Unimplemented),
+            0x20 => Err(Unimplemented),
+            0x24 => Err(Unimplemented),
             0x40 => Ok(self.scratch_reg[0]),
             0x44 => Ok(self.scratch_reg[1]),
-            0x50 => crate::mem_unimpl!("APBWait"),
-            0x54 => crate::mem_unimpl!("BusMstrArb"),
-            0x58 => crate::mem_unimpl!("BootModeClr"),
+            0x50 => Err(Unimplemented),
+            0x54 => Err(Unimplemented),
+            0x58 => Err(Unimplemented),
             0x80 => Ok(self.device_cfg),
-            0x84 => crate::mem_unimpl!("VidClkDiv"),
-            0x88 => crate::mem_unimpl!("MIRClkDiv"),
-            0x8C => crate::mem_unimpl!("I2SClkDiv"),
-            0x90 => crate::mem_unimpl!("KeyTchClkDiv"),
-            0x94 => crate::mem_unimpl!("ChipID"),
-            0x9C => crate::mem_unimpl!("SysCfg"),
+            0x84 => Err(Unimplemented),
+            0x88 => Err(Unimplemented),
+            0x8C => Err(Unimplemented),
+            0x90 => Err(Unimplemented),
+            0x94 => Err(Unimplemented),
+            0x9C => Err(Unimplemented),
             0xC0 => {
                 if self.is_locked {
                     Ok(0x00)
@@ -120,19 +127,18 @@ impl Memory for Syscon {
                     Ok(0x01)
                 }
             }
-            _ => crate::mem_unexpected!(),
+            _ => Err(Unexpected),
         }
-        .mem_ctx(offset, self)
     }
 
     fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
         if (0x80..=0x9C).contains(&offset) {
             if self.is_locked {
-                // FIXME: emit warning when device contract is violated (instead of panic)
-                panic!(
-                    "Attempted to writing to SW locked syscon register (offset {:#x?})!",
-                    offset
-                );
+                return Err(ContractViolation {
+                    msg: "Attempted to writing to SW locked syscon register".to_string(),
+                    severity: log::Level::Error,
+                    stub_val: None,
+                });
             } else {
                 // syscon re-locks after a locked register has been written to
                 self.is_locked = true;
@@ -140,43 +146,38 @@ impl Memory for Syscon {
         }
 
         match offset {
-            0x00 => crate::mem_unimpl!("PwrSts"),
-            0x04 => crate::mem_unimpl!("PwrCnt"),
-            0x08 => {
-                // XXX: don't panic if writing to a read-only register
-                panic!("tried to write value to read-only syscon Halt register!");
-            }
-            0x0C => {
-                // XXX: don't panic if writing to a read-only register
-                panic!("tried to write value to read-only syscon Standby register!");
-            }
-            0x18 => crate::mem_unimpl!("TEOI"),
-            0x1C => crate::mem_unimpl!("STFClr"),
-            0x20 => crate::mem_unimpl!("ClkSet1"),
-            0x24 => crate::mem_unimpl!("ClkSet2"),
+            0x00 => Err(Unimplemented),
+            0x04 => Err(Unimplemented),
+            0x08 => Err(InvalidAccess),
+            0x0C => Err(InvalidAccess),
+            0x18 => Err(Unimplemented),
+            0x1C => Err(Unimplemented),
+            0x20 => Err(Unimplemented),
+            0x24 => Err(Unimplemented),
             0x40 => Ok(self.scratch_reg[0] = val),
             0x44 => Ok(self.scratch_reg[1] = val),
-            0x50 => crate::mem_unimpl!("APBWait"),
-            0x54 => crate::mem_unimpl!("BusMstrArb"),
-            0x58 => crate::mem_unimpl!("BootModeClr"),
+            0x50 => Err(Unimplemented),
+            0x54 => Err(Unimplemented),
+            0x58 => Err(Unimplemented),
             0x80 => Ok(self.device_cfg = val),
-            0x84 => crate::mem_unimpl!("VidClkDiv"),
-            0x88 => crate::mem_unimpl!("MIRClkDiv"),
-            0x8C => crate::mem_unimpl!("I2SClkDiv"),
-            0x90 => crate::mem_unimpl!("KeyTchClkDiv"),
-            0x94 => crate::mem_unimpl!("ChipID"),
-            0x9C => crate::mem_unimpl!("SysCfg"),
+            0x84 => Err(Unimplemented),
+            0x88 => Err(Unimplemented),
+            0x8C => Err(Unimplemented),
+            0x90 => Err(Unimplemented),
+            0x94 => Err(Unimplemented),
+            0x9C => Err(Unimplemented),
             0xC0 => {
                 if val == 0xAA {
-                    self.is_locked = false;
+                    Ok(self.is_locked = false)
                 } else {
-                    // FIXME: emit warning when device contract is violated (instead of panic)
-                    panic!("wrote non-0xAA value to SysSWLock register!");
+                    Err(ContractViolation {
+                        msg: "wrote non-0xAA value to SysSWLock register".to_string(),
+                        severity: log::Level::Error,
+                        stub_val: None,
+                    })
                 }
-                Ok(())
             }
-            _ => crate::mem_unexpected!(),
+            _ => Err(Unexpected),
         }
-        .mem_ctx(offset, self)
     }
 }
