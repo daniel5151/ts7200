@@ -241,12 +241,15 @@ fn spawn_input_buffer_thread(
                     state.update_interrupts(&interrupt_bus);
                 } else {
                     warn!("UART {} dropping received byte due to full FIFO", label);
+                    state.overrun = true;
                 }
             }
             None => {
                 let mut state = state.lock().unwrap();
-                state.timeout = true;
-                state.update_interrupts(&interrupt_bus);
+                if state.rx_buf.len() > 0 {
+                    state.timeout = true;
+                    state.update_interrupts(&interrupt_bus);
+                }
             }
         }
     };
