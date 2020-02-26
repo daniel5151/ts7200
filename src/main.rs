@@ -1,13 +1,9 @@
-#![allow(
-    clippy::cast_lossless,
-    clippy::match_bool // Matching on bools makes things cleaner sometimes
-)]
-
 pub mod devices;
-pub mod io;
+pub mod iobridge;
 pub mod memory;
 pub mod ts7200;
 
+use std::fs;
 use std::net::{TcpListener, TcpStream};
 
 use devices::uart;
@@ -17,7 +13,7 @@ use log::*;
 
 fn new_tcp_gdbstub<T: gdbstub::Target>(
     port: u16,
-) -> std::io::Result<gdbstub::GdbStub<T, TcpStream>> {
+) -> Result<gdbstub::GdbStub<T, TcpStream>, std::io::Error> {
     let sockaddr = format!("127.0.0.1:{}", port);
     info!("Waiting for a GDB connection on {:?}...", sockaddr);
 
@@ -36,11 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         panic!("Usage: ts7200 ELF_BINARY <TRAIN_STDIN> <TRAIN_STDOUT> <GDBPORT>");
     }
 
-    let file = std::fs::File::open(args.get(1).expect("must provide .elf to load"))?;
+    let file = fs::File::open(args.get(1).expect("must provide .elf to load"))?;
     let mut system = Ts7200::new_hle(file)?;
-
-    // hook up UARTs to I/O
-    // TODO: add CLI params to hook UARTs up to arbitrary files (e.g: named pipe)
 
     // uart1 is for trains
     match (args.get(2), args.get(3)) {
@@ -52,13 +45,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let in_path = check_shortcut(in_path);
             let out_path = check_shortcut(out_path);
 
-            let uart1 = &mut system.devices_mut().uart1;
-            uart1.install_reader_task(|tx| {
-                crate::io::file::spawn_reader_thread(in_path, tx).map(uart::ReaderTask::new)
-            })?;
-            uart1.install_writer_task(|rx| {
-                crate::io::file::spawn_writer_thread(out_path, rx).map(uart::WriterTask::new)
-            })?;
+            system
+                .devices_mut()
+                .uart1
+                .install_io_tasks(|tx, rx| -> Result<_, std::io::Error> {
+                    let in_file = fs::File::open(in_path)?;
+                    let out_file = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(out_path)?;
+
+                    let in_thread = iobridge::reader_to_chan(in_path.to_string(), in_file, tx)?;
+                    let out_thread = iobridge::writer_to_chan(out_path.to_string(), out_file, rx)?;
+                    Ok((
+                        uart::ReaderTask::new(in_thread),
+                        uart::WriterTask::new(out_thread),
+                    ))
+                })?;
         }
         (_, _) => {}
     }
@@ -68,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .devices_mut()
         .uart2
         .install_io_tasks(|tx, rx| {
-            let (in_thread, out_thread) = crate::io::stdio::spawn_threads(tx, rx);
+            let (in_thread, out_thread) = iobridge::stdio_to_chans(tx, rx);
             Ok((
                 uart::ReaderTask::new(in_thread),
                 uart::WriterTask::new(out_thread),

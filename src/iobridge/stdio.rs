@@ -110,8 +110,8 @@ fn spawn_writer_thread(rx: chan::Receiver<u8>) -> (JoinHandle<()>, chan::Sender<
     (handle, ctrl_c_exit_tx)
 }
 
-/// Spawn stdio reader and writer threads that puts stdio in raw mode
-pub fn spawn_threads(
+/// Put Stdin into raw mode, and connect Stdin/Stdout to the tx/rx channels.
+pub fn stdio_to_chans(
     tx: chan::Sender<u8>,
     rx: chan::Receiver<u8>,
 ) -> (JoinHandle<()>, JoinHandle<()>) {

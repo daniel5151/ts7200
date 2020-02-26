@@ -474,40 +474,6 @@ impl Uart {
         }
     }
 
-    /// Register an input handler task with the UART.
-    ///
-    /// The provided task SHOULD send data to UART via the provided Sender
-    /// channel, and MUST terminate if the Sender hangs up.
-    ///
-    /// Returns the ReaderTask of any previous task that was registered with
-    /// the UART.
-    pub fn install_reader_task<E>(
-        &mut self,
-        install_reader_task: impl FnOnce(chan::Sender<u8>) -> Result<ReaderTask, E>,
-    ) -> Result<Option<ReaderTask>, E> {
-        let ret = self.worker.user_reader_task.take();
-        self.worker.user_reader_task =
-            Some(install_reader_task(self.worker.uart_input_chan.clone())?);
-        Ok(ret)
-    }
-
-    /// Register an output handler task with the UART.
-    ///
-    /// The provided task SHOULD receive data to UART via the provided Receiver
-    /// channel, and MUST terminate if the Receiver hangs up.
-    ///
-    /// Returns the WriterTask of any previous task that was registered
-    /// with the UART.
-    pub fn install_writer_task<E>(
-        &mut self,
-        install_writer_task: impl FnOnce(chan::Receiver<u8>) -> Result<WriterTask, E>,
-    ) -> Result<Option<WriterTask>, E> {
-        let ret = self.worker.user_writer_task.take();
-        self.worker.user_writer_task =
-            Some(install_writer_task(self.worker.uart_output_chan.clone())?);
-        Ok(ret)
-    }
-
     /// Register a pair of Input and Output tasks with the UART.
     ///
     /// The provided tasks SHOULD send/receive data to/from UART via the
