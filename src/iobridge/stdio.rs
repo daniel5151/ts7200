@@ -31,7 +31,7 @@ fn spawn_reader_thread(tx: chan::Sender<u8>, ctrl_c_exit: chan::Sender<CtrlC>) -
     thread::Builder::new()
         .name("stdio reader".to_string())
         .spawn(thread)
-        .unwrap()
+        .expect("failed to spawn thread")
 }
 
 fn spawn_writer_thread(rx: chan::Receiver<u8>) -> (JoinHandle<()>, chan::Sender<CtrlC>) {
@@ -103,7 +103,7 @@ fn spawn_writer_thread(rx: chan::Receiver<u8>) -> (JoinHandle<()>, chan::Sender<
     let handle = thread::Builder::new()
         .name("stdio writer".to_string())
         .spawn(thread)
-        .unwrap();
+        .expect("failed to spawn thread");
 
     ready_rx.recv().unwrap();
 

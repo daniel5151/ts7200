@@ -487,7 +487,7 @@ impl Uart {
         install_io_tasks: impl FnOnce(
             chan::Sender<u8>,
             chan::Receiver<u8>,
-        ) -> Result<(ReaderTask, WriterTask), E>,
+        ) -> Result<(Option<ReaderTask>, Option<WriterTask>), E>,
     ) -> Result<(Option<ReaderTask>, Option<WriterTask>), E> {
         let ret = (
             self.worker.user_reader_task.take(),
@@ -497,8 +497,8 @@ impl Uart {
             self.worker.uart_input_chan.clone(),
             self.worker.uart_output_chan.clone(),
         )?;
-        self.worker.user_reader_task = Some(in_handle);
-        self.worker.user_writer_task = Some(out_handle);
+        self.worker.user_reader_task = in_handle;
+        self.worker.user_writer_task = out_handle;
         Ok(ret)
     }
 }
@@ -535,7 +535,17 @@ impl Memory for Uart {
             // data (8-bit)
             0x00 => {
                 // If the buffer is empty return a dummy value
-                let val = state.rx_buf.pop_front().unwrap_or(0) as u32;
+                let val = match state.rx_buf.pop_front() {
+                    Some(v) => v as u32,
+                    None => {
+                        return Err(ContractViolation {
+                            msg: "Reading from empty UART FIFO".to_string(),
+                            severity: log::Level::Warn,
+                            stub_val: None,
+                        })
+                    }
+                };
+
                 if state.rx_buf.is_empty() {
                     state.timeout = false;
                 }
