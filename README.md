@@ -10,11 +10,32 @@ The primary purpose of this emulator is to enable rapid prototyping and developm
 
 **We make no guarantees about the accuracy and/or stability of this emulator! Use it at your own risk!**
 
-Instruction timings and hardware access times are _waaay_ off, so any profiling/benchmarking performed in the emulator won't be representative of the real hardware whatsoever!
+- Instruction timings and hardware access times are _waaay_ off, so any profiling/benchmarking performed in the emulator won't be representative of the real hardware whatsoever!
+- Emulated UARTs are quiet forgiving when it comes to sending / receiving data!
 
-## Emulator Quirks
+## Getting Started
 
-- Instead of zeroing-out RAM, uninitialized RAM is set to the ASCII value corresponding to '-' (i.e: 45). This should make it easier to catch uninitialized memory bugs.
+`ts7200` is written in Rust, and uses `cargo` for building / installation. If you don't have Rust installed, you can install it via [`rustup`](https://rustup.rs/).
+
+You can install `ts7200` to your `$PATH` by running the following command:
+
+```bash
+cargo install --path .
+```
+
+**We highly recommended redirecting the emulator's `stderr` to a file / tty!**
+
+By default, the emulator puts `stdin` and `stdout` into "raw" mode, which ends up "breaking" `stderr`'s output. When `stderr` inevitably tries to output some text to the tty, it ends up "smearing" it across the terminal. This can be fixed by redirecting the process's `stderr` to a separate tty: `ts7200 ... 2> /dev/pts/X`.
+
+## Emulator Enhancements
+
+While the emulator isn't as accurate as real hardware, there are quite a few features the emulator has that real hardware _doesn't_ give you:
+
+- GDB Debugging across context switches!
+- Emulated devices emit `ContractViolation` errors if they are accessed "incorrectly," unlike real hardware, which will silently fail. Keep an eye on `stderr`!
+    - e.g: Accessing Uninitialized RAM logs a warning to stderr
+    - e.g: Trying to enable a timer without giving it an initial value throws a fatal error
+- Instead of zeroing-out RAM, uninitialized RAM is set to the ASCII value corresponding to '-' (i.e: decimal 45, hex 0x2d). This makes it easier to spot uninitialized memory issues.
 
 ## Status
 
@@ -26,10 +47,12 @@ Instruction timings and hardware access times are _waaay_ off, so any profiling/
         - [x] Initializes devices / key memory locations with hardware-validated values
     - [x] Debugging with GDB
 - Devices
-    - [x] UARTs - _Implemented, but Incomplete_
-        - [ ] TX bit is always set (can always write data)
-        - [ ] RX is non-blocking (i.e: cannot receive if UART has no data to send)
-        - [ ] Interrupts
+    - [x] UARTs - _Implemented, but too forgiving!_
+        - Real UART hardware can be quite finicky, _especially_ when interacting with the Marklin train controller. Things that work fine on the emulator may _not_ work on actual hardware!
+        - [x] RX/TX Flags
+        - [ ] CTS flag (_currently fixed to `1`!_)
+        - [x] Important registers (for CS 452)
+        - [x] Interrupts
     - [x] Timers - _Totally Accurate!_
         - [x] All Documented Register Functionality
         - [x] Interrupts
@@ -56,9 +79,9 @@ Instruction timings and hardware access times are _waaay_ off, so any profiling/
 
 - LLE emulation of all TS-7200 hardware (e.g: to support "cold boots" directly into Redboot)
     - Most of the devices on the board aren't used by the CS 452 kernel, so emulating / stubbing them out just to get Redboot working isn't a great use of our time.
-- Accurate CPU performance
-    - The emulated CPU runs as fast as it can, and it's performance will vary based on which machine you run the emulator on.
-    - _Note:_ Timers are implemented using the system clock, and do the Right Thing no matter how fast the host system is.
+- Totally Accurate CPU performance
+    - The emulated CPU runs as fast as the host system lets it, so performance will vary based on which machine you run the emulator on.
+    - _Note:_ Timers are implemented using the system clock, and will do the Right Thing no matter how fast the host system is.
 - Train emulation
     - You mean you want me to write a physics simulator for virtual trains? Hahahaha, yeah... no.
-    - _Update:_ Looks like someone else was crazy enough to actually attempt doing this! Check out the [MarklinSim](https://github.com/Martin1994/MarklinSim) project. With a bit of bash-glue, you should be able to hook it up to `ts7200`!
+    - _Update:_ Looks like someone else was crazy enough to actually attempt doing this! Check out the [MarklinSim](https://github.com/Martin1994/MarklinSim) project!

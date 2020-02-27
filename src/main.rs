@@ -40,11 +40,11 @@ struct Args {
     #[structopt(short, long)]
     gdbport: Option<u16>,
 
-    /// UART1 configuration. Defaults to "none"
+    /// UART1 configuration.
     #[structopt(long, default_value = "none")]
     uart1: UartCfg,
 
-    /// UART2 configuration. Defaults to "stdio"
+    /// UART2 configuration.
     #[structopt(long, default_value = "stdio")]
     uart2: UartCfg,
 }
