@@ -1,23 +1,191 @@
-#![allow(
-    clippy::cast_lossless,
-    clippy::match_bool // Matching on bools makes things cleaner sometimes
-)]
+use std::error::Error as StdError;
+use std::fmt::{self, Display};
+use std::fs;
+use std::net::{TcpListener, TcpStream};
+use std::str::FromStr;
+
+use log::*;
+use structopt::StructOpt;
 
 pub mod devices;
-pub mod io;
+pub mod iobridge;
 pub mod memory;
 pub mod ts7200;
 
-use std::net::{TcpListener, TcpStream};
+use crate::devices::uart;
+use crate::ts7200::Ts7200;
 
-use devices::uart;
-use ts7200::Ts7200;
+#[derive(StructOpt)]
+#[structopt(name = "ts7200")]
+#[structopt(about = r#"
+An emulator for the TS-7200 Single Board Computer, as used in CS 452 at the
+University of Waterloo.
 
-use log::*;
+UART CONFIGURATION:
+    The `--uartX` flags accept a configuration string. The format is closely
+    modeled after QEMU's `-serial` flag:
+
+    * none
+        - No device is connected
+    * file:/path/to/output[,in=/path/to/input]
+        - Write output to the specified file
+        - Read input from the specified file
+    * stdio
+        - Use the process's stdin / stdout
+        - Sets the terminal to "raw" mode
+    * tcp:[host]:port
+        - Connect to a tcp server
+        - "host" defaults to localhost
+
+    e.g: `--uart1=file:/dev/null,in=/tmp/trainin.pipe`, `--uart1=tcp::3018`
+"#)]
+struct Args {
+    /// kernel ELF file to load
+    kernel_elf: String,
+
+    /// spawn a gdb server listening on the specified port
+    #[structopt(short, long)]
+    gdbport: Option<u16>,
+
+    /// UART1 configuration.
+    #[structopt(long, default_value = "none")]
+    uart1: UartCfg,
+
+    /// UART2 configuration.
+    #[structopt(long, default_value = "stdio")]
+    uart2: UartCfg,
+}
+
+enum UartCfg {
+    /// none
+    None,
+    /// file:/path/
+    File {
+        out_path: String,
+        in_path: Option<String>,
+    },
+    /// stdio
+    Stdio,
+    /// tcp:[host]:port
+    Tcp { host: String, port: u16 },
+}
+
+#[derive(Debug)]
+enum UartCfgError {
+    BadFile(std::io::Error),
+    BadTcp(std::io::Error),
+}
+
+impl Display for UartCfgError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        match self {
+            UartCfgError::BadFile(e) => write!(f, "Could not open file: {}", e),
+            UartCfgError::BadTcp(e) => write!(f, "Could not open tcp: {}", e),
+        }
+    }
+}
+impl StdError for UartCfgError {}
+
+impl UartCfg {
+    fn apply(&self, uart: &mut uart::Uart) -> Result<(), UartCfgError> {
+        uart.install_io_tasks(|tx, rx| match self {
+            UartCfg::None => Ok((None, None)),
+            UartCfg::File { in_path, out_path } => {
+                let in_writer = match in_path {
+                    Some(in_path) => {
+                        let in_file = fs::File::open(&in_path).map_err(UartCfgError::BadFile)?;
+                        let in_thread = iobridge::reader_to_chan(in_path.to_string(), in_file, tx);
+                        Some(uart::ReaderTask::new(in_thread))
+                    }
+                    None => None,
+                };
+
+                let out_writer = {
+                    let out_file = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&out_path)
+                        .map_err(UartCfgError::BadFile)?;
+                    let out_thread = iobridge::writer_to_chan(out_path.to_string(), out_file, rx);
+                    Some(uart::WriterTask::new(out_thread))
+                };
+
+                Ok((in_writer, out_writer))
+            }
+            UartCfg::Stdio => {
+                let (in_thread, out_thread) = iobridge::stdio_to_chans(tx, rx);
+                Ok((
+                    Some(uart::ReaderTask::new(in_thread)),
+                    Some(uart::WriterTask::new(out_thread)),
+                ))
+            }
+            UartCfg::Tcp { host, port } => {
+                let addr = format!("{}:{}", host, port);
+                let in_stream = TcpStream::connect(&addr).map_err(UartCfgError::BadTcp)?;
+                let out_stream = in_stream.try_clone().expect("could not clone TcpStream");
+
+                let in_thread = iobridge::reader_to_chan(addr.clone(), in_stream, tx);
+                let out_thread = iobridge::writer_to_chan(addr.clone(), out_stream, rx);
+                Ok((
+                    Some(uart::ReaderTask::new(in_thread)),
+                    Some(uart::WriterTask::new(out_thread)),
+                ))
+            }
+        })
+        .map(drop)
+    }
+}
+
+impl FromStr for UartCfg {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<UartCfg, &'static str> {
+        let mut s = s.split(":");
+        let kind = s.next().unwrap();
+        Ok(match kind {
+            "none" => UartCfg::None,
+            "file" => {
+                let mut s = s.next().ok_or("no output path specified")?.split(",");
+
+                let out_path = s.next().unwrap().to_string();
+                let in_path = match s.next() {
+                    Some(s) => {
+                        let mut s = s.split("=");
+                        if s.next().unwrap() != "in" {
+                            return Err("expected to find `in=/path/to/file`");
+                        }
+                        let in_path = s.next().ok_or("invalid input path")?.to_string();
+                        Some(in_path)
+                    }
+                    None => None,
+                };
+                UartCfg::File { in_path, out_path }
+            }
+            "stdio" => UartCfg::Stdio,
+            "tcp" => {
+                let host = match s.next().ok_or("no host specified")? {
+                    "" => "127.0.0.1",
+                    other => other,
+                };
+                let port = s
+                    .next()
+                    .ok_or("no port specified")?
+                    .parse()
+                    .map_err(|_| "invalid port")?;
+
+                UartCfg::Tcp {
+                    host: host.to_string(),
+                    port,
+                }
+            }
+            _ => return Err("invalid io type"),
+        })
+    }
+}
 
 fn new_tcp_gdbstub<T: gdbstub::Target>(
     port: u16,
-) -> std::io::Result<gdbstub::GdbStub<T, TcpStream>> {
+) -> Result<gdbstub::GdbStub<T, TcpStream>, std::io::Error> {
     let sockaddr = format!("127.0.0.1:{}", port);
     info!("Waiting for a GDB connection on {:?}...", sockaddr);
 
@@ -28,58 +196,21 @@ fn new_tcp_gdbstub<T: gdbstub::Target>(
     Ok(gdbstub::GdbStub::new(stream))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn StdError>> {
     pretty_env_logger::init();
+    let args = Args::from_args();
 
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 && args.len() != 4 && args.len() != 5 {
-        panic!("Usage: ts7200 ELF_BINARY <TRAIN_STDIN> <TRAIN_STDOUT> <GDBPORT>");
-    }
-
-    let file = std::fs::File::open(args.get(1).expect("must provide .elf to load"))?;
+    // create the base system
+    let file = fs::File::open(args.kernel_elf)?;
     let mut system = Ts7200::new_hle(file)?;
 
-    // hook up UARTs to I/O
-    // TODO: add CLI params to hook UARTs up to arbitrary files (e.g: named pipe)
+    // hook up the uarts
+    args.uart1.apply(&mut system.devices_mut().uart1)?;
+    args.uart2.apply(&mut system.devices_mut().uart2)?;
 
-    // uart1 is for trains
-    match (args.get(2), args.get(3)) {
-        (Some(in_path), Some(out_path)) => {
-            let check_shortcut = |path| match path {
-                "-" => "/dev/null",
-                _ => path,
-            };
-            let in_path = check_shortcut(in_path);
-            let out_path = check_shortcut(out_path);
-
-            let uart1 = &mut system.devices_mut().uart1;
-            uart1.install_reader_task(|tx| {
-                crate::io::file::spawn_reader_thread(in_path, tx).map(uart::ReaderTask::new)
-            })?;
-            uart1.install_writer_task(|rx| {
-                crate::io::file::spawn_writer_thread(out_path, rx).map(uart::WriterTask::new)
-            })?;
-        }
-        (_, _) => {}
-    }
-
-    // uart2 is for console communication
-    system
-        .devices_mut()
-        .uart2
-        .install_io_tasks(|tx, rx| {
-            let (in_thread, out_thread) = crate::io::stdio::spawn_threads(tx, rx);
-            Ok((
-                uart::ReaderTask::new(in_thread),
-                uart::WriterTask::new(out_thread),
-            ))
-        })
-        .map_err(|_: ()| "could not connect stdio to UART2")?;
-
-    let debugger = match args.get(4) {
-        Some(port) => Some(new_tcp_gdbstub(
-            port.parse().map_err(|_| "invalid gdb port")?,
-        )?),
+    // (potentially) spin up the debugger
+    let debugger = match args.gdbport {
+        Some(port) => Some(new_tcp_gdbstub(port)?),
         None => None,
     };
 
