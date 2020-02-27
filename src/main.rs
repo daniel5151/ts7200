@@ -22,15 +22,22 @@ An emulator for the TS-7200 Single Board Computer, as used in CS 452 at the
 University of Waterloo.
 
 UART CONFIGURATION:
-    The `--uartX` flags except a configuration string. The string's format is
-    closely modeled after QEMU's `-serial` flag:
+    The `--uartX` flags accept a configuration string. The format is closely
+    modeled after QEMU's `-serial` flag:
 
-    * none               | No device is connected
-    * file:/path/to/file | Write output to the specified file
-    * stdio              | Use the process's stdin / stdout
-    * tcp:[host]:port    | Connect to a tcp server. "host" defaults to localhost
+    * none
+        - No device is connected
+    * file:/path/to/output[,in=/path/to/input]
+        - Write output to the specified file
+        - Read input from the specified file
+    * stdio
+        - Use the process's stdin / stdout
+        - Sets the terminal to "raw" mode
+    * tcp:[host]:port
+        - Connect to a tcp server
+        - "host" defaults to localhost
 
-    e.g: `--uart1=file:./trainout`, `--uart1=tcp::3018`
+    e.g: `--uart1=file:/dev/null,in=/tmp/trainin.pipe`, `--uart1=tcp::3018`
 "#)]
 struct Args {
     /// kernel ELF file to load
@@ -53,7 +60,10 @@ enum UartCfg {
     /// none
     None,
     /// file:/path/
-    File(String),
+    File {
+        out_path: String,
+        in_path: Option<String>,
+    },
     /// stdio
     Stdio,
     /// tcp:[host]:port
@@ -80,15 +90,27 @@ impl UartCfg {
     fn apply(&self, uart: &mut uart::Uart) -> Result<(), UartCfgError> {
         uart.install_io_tasks(|tx, rx| match self {
             UartCfg::None => Ok((None, None)),
-            UartCfg::File(path) => {
-                let out_file = fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .map_err(UartCfgError::BadFile)?;
+            UartCfg::File { in_path, out_path } => {
+                let in_writer = match in_path {
+                    Some(in_path) => {
+                        let in_file = fs::File::open(&in_path).map_err(UartCfgError::BadFile)?;
+                        let in_thread = iobridge::reader_to_chan(in_path.to_string(), in_file, tx);
+                        Some(uart::ReaderTask::new(in_thread))
+                    }
+                    None => None,
+                };
 
-                let out_thread = iobridge::writer_to_chan(path.to_string(), out_file, rx);
-                Ok((None, Some(uart::WriterTask::new(out_thread))))
+                let out_writer = {
+                    let out_file = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&out_path)
+                        .map_err(UartCfgError::BadFile)?;
+                    let out_thread = iobridge::writer_to_chan(out_path.to_string(), out_file, rx);
+                    Some(uart::WriterTask::new(out_thread))
+                };
+
+                Ok((in_writer, out_writer))
             }
             UartCfg::Stdio => {
                 let (in_thread, out_thread) = iobridge::stdio_to_chans(tx, rx);
@@ -122,7 +144,23 @@ impl FromStr for UartCfg {
         let kind = s.next().unwrap();
         Ok(match kind {
             "none" => UartCfg::None,
-            "file" => UartCfg::File(s.next().ok_or("no file path specified")?.to_string()),
+            "file" => {
+                let mut s = s.next().ok_or("no output path specified")?.split(",");
+
+                let out_path = s.next().unwrap().to_string();
+                let in_path = match s.next() {
+                    Some(s) => {
+                        let mut s = s.split("=");
+                        if s.next().unwrap() != "in" {
+                            return Err("expected to find `in=/path/to/file`");
+                        }
+                        let in_path = s.next().ok_or("invalid input path")?.to_string();
+                        Some(in_path)
+                    }
+                    None => None,
+                };
+                UartCfg::File { in_path, out_path }
+            }
             "stdio" => UartCfg::Stdio,
             "tcp" => {
                 let host = match s.next().ok_or("no host specified")? {
