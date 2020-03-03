@@ -246,7 +246,7 @@ fn spawn_input_buffer_thread(
             }
             None => {
                 let mut state = state.lock().unwrap();
-                if state.rx_buf.len() > 0 {
+                if !state.rx_buf.is_empty() {
                     state.timeout = true;
                     state.update_interrupts(&interrupt_bus);
                 }

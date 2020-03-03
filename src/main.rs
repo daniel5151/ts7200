@@ -125,7 +125,7 @@ impl UartCfg {
                 let out_stream = in_stream.try_clone().expect("could not clone TcpStream");
 
                 let in_thread = iobridge::reader_to_chan(addr.clone(), in_stream, tx);
-                let out_thread = iobridge::writer_to_chan(addr.clone(), out_stream, rx);
+                let out_thread = iobridge::writer_to_chan(addr, out_stream, rx);
                 Ok((
                     Some(uart::ReaderTask::new(in_thread)),
                     Some(uart::WriterTask::new(out_thread)),
@@ -140,17 +140,17 @@ impl FromStr for UartCfg {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<UartCfg, &'static str> {
-        let mut s = s.split(":");
+        let mut s = s.split(':');
         let kind = s.next().unwrap();
         Ok(match kind {
             "none" => UartCfg::None,
             "file" => {
-                let mut s = s.next().ok_or("no output path specified")?.split(",");
+                let mut s = s.next().ok_or("no output path specified")?.split(',');
 
                 let out_path = s.next().unwrap().to_string();
                 let in_path = match s.next() {
                     Some(s) => {
-                        let mut s = s.split("=");
+                        let mut s = s.split('=');
                         if s.next().unwrap() != "in" {
                             return Err("expected to find `in=/path/to/file`");
                         }

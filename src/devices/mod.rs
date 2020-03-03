@@ -1,4 +1,7 @@
-#![allow(clippy::unit_arg)] // Substantially reduces boilerplate
+#![allow(
+    clippy::unit_arg,  // Substantially reduces boilerplate
+    clippy::match_bool // can make things more clear at times
+)]
 
 pub mod ram;
 pub mod syscon;
