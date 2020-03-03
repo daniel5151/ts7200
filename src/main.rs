@@ -38,6 +38,10 @@ UART CONFIGURATION:
         - "host" defaults to localhost
 
     e.g: `--uart1=file:/dev/null,in=/tmp/trainin.pipe`, `--uart1=tcp::3018`
+
+HACKS:
+    --hack-inf-uart-rx    Work around for using the MarklinSim with the current
+                          "always-on" CTS implementation.
 "#)]
 struct Args {
     /// kernel ELF file to load
@@ -54,6 +58,10 @@ struct Args {
     /// UART2 configuration.
     #[structopt(long, default_value = "stdio")]
     uart2: UartCfg,
+
+    /// HACK: Give UARTs infinite rx FIFOs.
+    #[structopt(long)]
+    hack_inf_uart_rx: bool,
 }
 
 enum UartCfg {
@@ -207,6 +215,12 @@ fn main() -> Result<(), Box<dyn StdError>> {
     // hook up the uarts
     args.uart1.apply(&mut system.devices_mut().uart1)?;
     args.uart2.apply(&mut system.devices_mut().uart2)?;
+
+    // apply hax
+    if args.hack_inf_uart_rx {
+        system.devices_mut().uart1.hack_set_infinite_rx(true);
+        system.devices_mut().uart2.hack_set_infinite_rx(true);
+    }
 
     // (potentially) spin up the debugger
     let debugger = match args.gdbport {

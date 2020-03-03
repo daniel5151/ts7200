@@ -56,6 +56,7 @@ const UARTCLK_HZ: u64 = 7_372_800;
 struct State {
     label: &'static str,
     interrupts: UartInterrupts,
+    hack_inf_rx: bool,
 
     linctrl_latched: bool,
     linctrl_latch: [u32; 3],
@@ -85,6 +86,7 @@ impl State {
         let mut s = State {
             label,
             interrupts,
+            hack_inf_rx: false,
 
             linctrl_latched: false,
             linctrl_latch: [0, 0, 0],
@@ -236,7 +238,7 @@ fn spawn_input_buffer_thread(
                 thread::sleep(bittime * word_len);
 
                 let mut state = state.lock().unwrap();
-                if state.rx_buf.len() < state.fifo_size {
+                if state.rx_buf.len() < state.fifo_size || state.hack_inf_rx {
                     state.rx_buf.push_back(b);
                     state.update_interrupts(&interrupt_bus);
                 } else {
@@ -500,6 +502,11 @@ impl Uart {
         self.worker.user_reader_task = in_handle;
         self.worker.user_writer_task = out_handle;
         Ok(ret)
+    }
+
+    /// HACK: sets the UART to have an infinite RX FIFO
+    pub fn hack_set_infinite_rx(&mut self, active: bool) {
+        self.state.lock().unwrap().hack_inf_rx = active;
     }
 }
 
