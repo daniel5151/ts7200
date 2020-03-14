@@ -205,7 +205,12 @@ fn new_tcp_gdbstub<T: gdbstub::Target>(
 }
 
 fn main() -> Result<(), Box<dyn StdError>> {
-    pretty_env_logger::init();
+    pretty_env_logger::formatted_builder()
+        .filter(None, LevelFilter::Debug)
+        .filter(Some("arm7tdmi_rs"), LevelFilter::Debug)
+        .parse_filters(&std::env::var("RUST_LOG").unwrap_or(String::new()))
+        .init();
+
     let args = Args::from_args();
 
     // create the base system
