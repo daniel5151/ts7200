@@ -5,9 +5,6 @@ authors = ["Daniel Prilik <danielprilik@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-arm7tdmi-rs = { path = "../arm7tdmi-rs" }
-gdbstub = { path = "../gdbstub", features = ["std"] }
-
 byteorder = "1.3"
 crossbeam-channel = "0.4"
 goblin = "0.1"
@@ -15,3 +12,12 @@ log = "0.4"
 pretty_env_logger = "0.3"
 structopt = "0.3"
 termion = "1.5"
+
+[dependencies.arm7tdmi-rs]
+git = "https://github.com/daniel5151/arm7tdmi-rs.git"
+rev = "83597fa28b4e0783196b37aadf9994994232a256"
+
+[dependencies.gdbstub]
+features = ["std"]
+git = "https://github.com/daniel5151/gdbstub.git"
+rev = "53fdf2fa1db1db208640ec5b70c02f27a9262605"
