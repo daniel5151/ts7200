@@ -1,6 +1,6 @@
 # ts7200
 
-A high level emulator for the [TS-7200](https://www.embeddedarm.com/products/TS-7200) Single Board Computer, as used in CS 452 - Real Time Operating Systems at the University of Waterloo.
+A high level emulator for the [TS-7200](https://www.embeddedarm.com/products/TS-7200) Single Board Computer, as used in [CS 452 - Real Time Operating Systems](https://www.student.cs.uwaterloo.ca/~cs452/W20/) at the University of Waterloo.
 
 _Choo Choo!_ 🚂
 
