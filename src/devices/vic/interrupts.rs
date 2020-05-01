@@ -1,4 +1,5 @@
-/// TS-7200 VIC Interrupts, as enumerated in section 6.1.2 of the EP93xx User's Guide.
+/// TS-7200 VIC Interrupts, as enumerated in section 6.1.2 of the
+/// EP93xx User's Guide.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Interrupt {
     Tc1Ui,

@@ -208,7 +208,7 @@ fn main() -> Result<(), Box<dyn StdError>> {
     pretty_env_logger::formatted_builder()
         .filter(None, LevelFilter::Debug)
         .filter(Some("arm7tdmi_rs"), LevelFilter::Debug)
-        .parse_filters(&std::env::var("RUST_LOG").unwrap_or(String::new()))
+        .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
         .init();
 
     let args = Args::from_args();

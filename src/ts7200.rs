@@ -532,23 +532,19 @@ macro_rules! impl_memadapter_r {
                 Ok(val) => val,
                 Err(e) => {
                     // If it's a stubbed-read, pass through the stubbed value
-                    let ret =  match e {
+                    let ret = match e {
                         MemException::StubRead(v) => v as $ret,
-                        MemException::ContractViolation{ stub_val, .. } => {
-                            match stub_val {
-                                Some(v) => v as $ret,
-                                None => 0x00
-                            }
+                        MemException::ContractViolation { stub_val, .. } => match stub_val {
+                            Some(v) => v as $ret,
+                            None => 0x00,
                         },
-                        _ => 0x00 // contents of register undefined
+                        _ => 0x00, // contents of register undefined
                     };
-                    self.exception = Some(
-                        MemoryAdapterException {
-                            addr,
-                            kind: MemAccessKind::Read,
-                            mem_except: e
-                        }
-                    );
+                    self.exception = Some(MemoryAdapterException {
+                        addr,
+                        kind: MemAccessKind::Read,
+                        mem_except: e,
+                    });
                     ret
                 }
             }
@@ -563,13 +559,11 @@ macro_rules! impl_memadapter_w {
             match self.mem.$fn(addr, val) {
                 Ok(()) => {}
                 Err(e) => {
-                    self.exception = Some(
-                        MemoryAdapterException {
-                            addr,
-                            kind: MemAccessKind::Write,
-                            mem_except: e
-                        }
-                    );
+                    self.exception = Some(MemoryAdapterException {
+                        addr,
+                        kind: MemAccessKind::Write,
+                        mem_except: e,
+                    });
                 }
             }
         }
