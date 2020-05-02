@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use arm7tdmi_rs::{reg, Cpu, Exception, Memory as ArmMemory};
+use armv4t_emu::{reg, Cpu, Exception, Memory as ArmMemory, Mode as ArmMode};
 use crossbeam_channel as chan;
 use log::*;
 
@@ -48,7 +48,7 @@ impl Ts7200 {
     /// Execution begins from OS code (as specified in the elf file), and the
     /// system's peripherals are pre-initialized.
     pub fn new_hle(mut fw_file: impl Read) -> std::io::Result<Ts7200> {
-        // TODO: use seek instead of reading entire elf file into memory.
+        // TODO?: use seek instead of reading entire elf file into memory.
 
         // load kernel ELF
         let mut elf_data = Vec::new();
@@ -59,14 +59,11 @@ impl Ts7200 {
 
         // load directly into the kernel
         debug!("Setting PC to {:#010x?}", elf_header.entry);
-        let cpu = Cpu::new(&[
-            (0, reg::PC, elf_header.entry as u32),
-            (0, reg::CPSR, 0xd3), // supervisor mode
-            // SP and LR vary across between banks
-            // set supervisor mode registers
-            (3, reg::LR, HLE_BOOTLOADER_LR),
-            (3, reg::SP, HLE_BOOTLOADER_SP),
-        ]);
+        let mut cpu = Cpu::new();
+        cpu.reg_set(ArmMode::User, reg::PC, elf_header.entry as u32);
+        cpu.reg_set(ArmMode::User, reg::CPSR, 0xd3); // supervisor mode
+        cpu.reg_set(ArmMode::Supervisor, reg::LR, HLE_BOOTLOADER_LR);
+        cpu.reg_set(ArmMode::Supervisor, reg::SP, HLE_BOOTLOADER_SP);
 
         // create the interrupt bus
         let (interrupt_bus_tx, interrupt_bus_rx) = chan::unbounded();
@@ -120,7 +117,7 @@ impl Ts7200 {
             mem_except,
         } = exception;
 
-        let pc = cpu.reg_get(0, reg::PC);
+        let pc = cpu.reg_get(ArmMode::User, reg::PC);
         let in_mem_space_of = match mem.id_of(addr) {
             Some(id) => id,
             None => "<root>".to_string(),
@@ -205,10 +202,10 @@ impl Ts7200 {
     pub fn run(&mut self) -> Result<(), FatalError> {
         loop {
             if self.hle {
-                let pc = self.cpu.reg_get(0, reg::PC);
+                let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
                 if pc == HLE_BOOTLOADER_LR {
                     info!("Successfully returned to bootloader");
-                    info!("Return value: {}", self.cpu.reg_get(0, 0));
+                    info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
                     return Ok(());
                 }
             }
@@ -217,7 +214,7 @@ impl Ts7200 {
             match self.devices.syscon.power_state() {
                 PowerState::Run => {
                     let mut mem = MemoryAdapter::new(&mut self.devices);
-                    self.cpu.cycle(&mut mem);
+                    self.cpu.step(&mut mem);
                     if let Some(e) = mem.take_exception() {
                         Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
                     }
@@ -256,10 +253,10 @@ impl Target for Ts7200 {
         mut log_mem_access: impl FnMut(GdbStubAccess<u32>),
     ) -> Result<TargetState, Self::Error> {
         if self.hle {
-            let pc = self.cpu.reg_get(0, reg::PC);
+            let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
             if pc == HLE_BOOTLOADER_LR {
                 info!("Successfully returned to bootloader");
-                info!("Return value: {}", self.cpu.reg_get(0, 0));
+                info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
                 return Ok(TargetState::Halted);
             }
         }
@@ -297,7 +294,7 @@ impl Target for Ts7200 {
             PowerState::Run => {
                 let mut sniffer = MemSniffer::new(&mut self.devices, log_access_to_gdb);
                 let mut mem = MemoryAdapter::new(&mut sniffer);
-                self.cpu.cycle(&mut mem);
+                self.cpu.step(&mut mem);
                 if let Some(e) = mem.take_exception() {
                     Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
                 }
@@ -321,20 +318,20 @@ impl Target for Ts7200 {
 
     // order specified in binutils-gdb/blob/master/gdb/features/arm/arm-core.xml
     fn read_registers(&mut self, mut push_reg: impl FnMut(&[u8])) {
-        let bank = self.cpu.get_mode().reg_bank();
+        let mode = self.cpu.mode();
         for i in 0..13 {
-            push_reg(&self.cpu.reg_get(bank, i).to_le_bytes());
+            push_reg(&self.cpu.reg_get(mode, i).to_le_bytes());
         }
-        push_reg(&self.cpu.reg_get(bank, reg::SP).to_le_bytes()); // 13
-        push_reg(&self.cpu.reg_get(bank, reg::LR).to_le_bytes()); // 14
-        push_reg(&self.cpu.reg_get(bank, reg::PC).to_le_bytes()); // 15
+        push_reg(&self.cpu.reg_get(mode, reg::SP).to_le_bytes()); // 13
+        push_reg(&self.cpu.reg_get(mode, reg::LR).to_le_bytes()); // 14
+        push_reg(&self.cpu.reg_get(mode, reg::PC).to_le_bytes()); // 15
 
         // Floating point registers, unused
         for _ in 0..25 {
             push_reg(&[0, 0, 0, 0]);
         }
 
-        push_reg(&self.cpu.reg_get(bank, reg::CPSR).to_le_bytes());
+        push_reg(&self.cpu.reg_get(mode, reg::CPSR).to_le_bytes());
     }
 
     fn write_registers(&mut self, regs: &[u8]) {
@@ -350,23 +347,23 @@ impl Target for Ts7200 {
                 u32::from_le_bytes(regs[idx - 4..idx].try_into().unwrap())
             }
         };
-        let bank = self.cpu.get_mode().reg_bank();
+        let mode = self.cpu.mode();
         for i in 0..13 {
-            self.cpu.reg_set(bank, i, next());
+            self.cpu.reg_set(mode, i, next());
         }
-        self.cpu.reg_set(bank, reg::SP, next());
-        self.cpu.reg_set(bank, reg::LR, next());
-        self.cpu.reg_set(bank, reg::PC, next());
+        self.cpu.reg_set(mode, reg::SP, next());
+        self.cpu.reg_set(mode, reg::LR, next());
+        self.cpu.reg_set(mode, reg::PC, next());
         // Floating point registers, unused
         for _ in 0..25 {
             next();
         }
 
-        self.cpu.reg_set(bank, reg::CPSR, next());
+        self.cpu.reg_set(mode, reg::CPSR, next());
     }
 
     fn read_pc(&mut self) -> u32 {
-        self.cpu.reg_get(self.cpu.get_mode().reg_bank(), reg::PC)
+        self.cpu.reg_get(self.cpu.mode(), reg::PC)
     }
 
     fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
