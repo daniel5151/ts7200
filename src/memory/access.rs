@@ -34,10 +34,6 @@ macro_rules! impl_memaccess {
 }
 
 impl MemAccess {
-    pub fn add_base_offset(&mut self, base_offset: u32) {
-        self.offset += base_offset;
-    }
-
     impl_memaccess!(Read, r8, u8, U8);
     impl_memaccess!(Read, r16, u16, U16);
     impl_memaccess!(Read, r32, u32, U32);

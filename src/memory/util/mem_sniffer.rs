@@ -1,9 +1,7 @@
-use crate::memory::{MemAccess, MemResult, Memory};
+use crate::memory::{Device, MemAccess, MemResult, Memory, Probe};
 
 /// [MemSniffer] wraps a [Memory] object, forwarding requests to the underlying
-/// memory object, while also recording accesses into the provided buffer.
-///
-/// Panics if the provided buffer overflows.
+/// memory object, while also recording accesses to the provided callback.
 #[derive(Debug)]
 pub struct MemSniffer<'a, M: Memory, F: FnMut(MemAccess)> {
     mem: &'a mut M,
@@ -36,19 +34,21 @@ macro_rules! impl_memsniff_w {
     };
 }
 
-impl<'a, M: Memory, F: FnMut(MemAccess)> Memory for MemSniffer<'a, M, F> {
-    fn device(&self) -> &'static str {
-        self.mem.device()
+impl<'a, M: Device + Memory, F: FnMut(MemAccess)> Device for MemSniffer<'a, M, F> {
+    fn kind(&self) -> &'static str {
+        self.mem.kind()
     }
 
     fn label(&self) -> Option<&str> {
         self.mem.label()
     }
 
-    fn id_of(&self, offset: u32) -> Option<String> {
-        self.mem.id_of(offset)
+    fn probe(&self, offset: u32) -> Probe<'_> {
+        self.mem.probe(offset)
     }
+}
 
+impl<'a, M: Memory, F: FnMut(MemAccess)> Memory for MemSniffer<'a, M, F> {
     impl_memsniff_r!(r8, u8);
     impl_memsniff_r!(r16, u16);
     impl_memsniff_r!(r32, u32);

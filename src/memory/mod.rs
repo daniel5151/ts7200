@@ -1,4 +1,3 @@
-pub mod macros;
 pub mod util;
 
 mod access;
@@ -7,31 +6,27 @@ mod exception;
 pub use access::{MemAccess, MemAccessKind, MemAccessVal};
 pub use exception::{MemException, MemResult};
 
+/// Implemented by all emulated devices.
+/// Provides a way to traverse and query the device tree.
+pub trait Device {
+    /// The name of the emulated device.
+    fn kind(&self) -> &'static str;
+
+    /// A descriptive label for a particular instance of the device
+    /// (if applicable).
+    fn label(&self) -> Option<&str> {
+        None
+    }
+
+    /// Query what devices exist at a particular memory offset.
+    fn probe(&self, offset: u32) -> Probe<'_>;
+}
+
 /// Common memory trait used throughout the emulator.
 ///
 /// Default implementations for 8-bit and 16-bit read/write return a
 /// [MemException::Misaligned] if the address isn't aligned properly.
 pub trait Memory {
-    /// The name of the emulated device
-    fn device(&self) -> &'static str;
-
-    /// A descriptive string for a particular instance of the device (if
-    /// applicable)
-    fn label(&self) -> Option<&str> {
-        None
-    }
-
-    /// Returns the string "<device>:<label>"
-    fn id(&self) -> String {
-        match self.label() {
-            Some(label) => format!("{}:{}", self.device(), label),
-            None => self.device().to_string(),
-        }
-    }
-
-    /// Get the id of the device at the provided offset
-    fn id_of(&self, offset: u32) -> Option<String>;
-
     /// Read a 32 bit value at a given offset
     fn r32(&mut self, offset: u32) -> MemResult<u32>;
     /// Write a 32 bit value to the given offset
@@ -74,40 +69,92 @@ pub trait Memory {
     }
 }
 
-impl Memory for Box<dyn Memory> {
-    fn device(&self) -> &'static str {
-        (**self).device()
-    }
+/// A link in a chain of devices corresponding to a particular memory offset.
+pub enum Probe<'a> {
+    /// Branch node representing a device.
+    Device {
+        device: &'a dyn Device,
+        next: Box<Probe<'a>>,
+    },
+    /// Leaf node representing a register.
+    Register(&'a str),
+    /// Unmapped memory.
+    Unmapped,
+}
 
-    fn label(&self) -> Option<&str> {
-        (**self).label()
-    }
+impl<'a> std::fmt::Display for Probe<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Probe::Device { device, next } => {
+                match device.label() {
+                    Some(label) => write!(f, "{}:{}", device.kind(), label)?,
+                    None => write!(f, "{}", device.kind())?,
+                };
 
-    fn id_of(&self, offset: u32) -> Option<String> {
-        (**self).id_of(offset)
-    }
+                match &**next {
+                    Probe::Unmapped => {}
+                    next => write!(f, " > {}", next)?,
+                }
+            }
+            Probe::Register(name) => write!(f, "{}", name)?,
+            Probe::Unmapped => write!(f, "<unmapped>")?,
+        }
 
-    fn r32(&mut self, offset: u32) -> MemResult<u32> {
-        (**self).r32(offset)
-    }
-
-    fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
-        (**self).w32(offset, val)
-    }
-
-    fn r8(&mut self, offset: u32) -> MemResult<u8> {
-        (**self).r8(offset)
-    }
-
-    fn r16(&mut self, offset: u32) -> MemResult<u16> {
-        (**self).r16(offset)
-    }
-
-    fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
-        (**self).w8(offset, val)
-    }
-
-    fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
-        (**self).w16(offset, val)
+        Ok(())
     }
 }
+
+macro_rules! impl_memfwd {
+    ($type:ty) => {
+        impl Memory for $type {
+            fn r32(&mut self, offset: u32) -> MemResult<u32> {
+                (**self).r32(offset)
+            }
+
+            fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
+                (**self).w32(offset, val)
+            }
+
+            fn r8(&mut self, offset: u32) -> MemResult<u8> {
+                (**self).r8(offset)
+            }
+
+            fn r16(&mut self, offset: u32) -> MemResult<u16> {
+                (**self).r16(offset)
+            }
+
+            fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
+                (**self).w8(offset, val)
+            }
+
+            fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
+                (**self).w16(offset, val)
+            }
+        }
+    };
+}
+
+macro_rules! impl_devfwd {
+    ($type:ty) => {
+        impl Device for $type {
+            fn kind(&self) -> &'static str {
+                (**self).kind()
+            }
+
+            fn label(&self) -> Option<&str> {
+                (**self).label()
+            }
+
+            fn probe(&self, offset: u32) -> Probe<'_> {
+                (**self).probe(offset)
+            }
+        }
+    };
+}
+
+impl_memfwd!(Box<dyn Memory>);
+impl_memfwd!(&mut dyn Memory);
+
+impl_devfwd!(Box<dyn Device>);
+impl_devfwd!(&dyn Device);
+impl_devfwd!(&mut dyn Device);

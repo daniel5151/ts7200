@@ -4,7 +4,7 @@ pub mod vicmanager;
 pub use interrupts::Interrupt;
 pub use vicmanager::VicManager;
 
-use crate::memory::{MemException::*, MemResult, Memory};
+use crate::memory::{Device, MemException::*, MemResult, Memory, Probe};
 
 #[derive(Debug, Default)]
 struct VectorEntry {
@@ -90,8 +90,8 @@ impl Vic {
     }
 }
 
-impl Memory for Vic {
-    fn device(&self) -> &'static str {
+impl Device for Vic {
+    fn kind(&self) -> &'static str {
         "VIC"
     }
 
@@ -99,7 +99,7 @@ impl Memory for Vic {
         Some(self.label)
     }
 
-    fn id_of(&self, offset: u32) -> Option<String> {
+    fn probe(&self, offset: u32) -> Probe<'_> {
         let reg = match offset {
             0x00 => "IRQStatus",
             0x04 => "FIQStatus",
@@ -115,11 +115,13 @@ impl Memory for Vic {
             0x100..=0x13c => "VectAddrX",
             0x200..=0x23c => "VectCntlX",
             0xfe0..=0xfe4 => "PeriphIDX",
-            _ => return None,
+            _ => return Probe::Unmapped,
         };
-        Some(reg.to_string())
+        Probe::Register(reg)
     }
+}
 
+impl Memory for Vic {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             0x00 => Ok(self.enabled_active_interrupts() & !self.select),

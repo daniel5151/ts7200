@@ -7,7 +7,8 @@ use log::*;
 use crate::devices;
 use crate::devices::vic::Interrupt;
 use crate::memory::{
-    util::MemSniffer, MemAccess, MemAccessKind, MemAccessVal, MemException, MemResult, Memory,
+    util::MemSniffer, Device, MemAccess, MemAccessKind, MemAccessVal, MemException, MemResult,
+    Memory, Probe,
 };
 
 // Values grafted from hardware. May vary a couple of bytes here and there, but
@@ -108,7 +109,7 @@ impl Ts7200 {
 
     fn handle_mem_exception(
         cpu: &Cpu,
-        mem: &impl Memory,
+        mem: &(impl Memory + Device),
         exception: MemoryAdapterException,
     ) -> Result<(), FatalError> {
         let MemoryAdapterException {
@@ -118,10 +119,7 @@ impl Ts7200 {
         } = exception;
 
         let pc = cpu.reg_get(ArmMode::User, reg::PC);
-        let in_mem_space_of = match mem.id_of(addr) {
-            Some(id) => id,
-            None => "<root>".to_string(),
-        };
+        let in_mem_space_of = format!("{}", mem.probe(addr));
 
         let ctx = format!(
             "[pc {:#010x?}][addr {:#010x?}][{}]",
@@ -436,7 +434,7 @@ macro_rules! ts7200_mmap {
                 fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
                     match addr {
                         $($start..=$end => self.$device.$fn(addr - $start),)*
-                        _ => devices::UnmappedMemory.$fn(addr - 0),
+                        _ => Err(MemException::Unexpected),
                     }
                 }
             };
@@ -447,24 +445,31 @@ macro_rules! ts7200_mmap {
                 fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
                     match addr {
                         $($start..=$end => self.$device.$fn(addr - $start, val),)*
-                        _ => devices::UnmappedMemory.$fn(addr - 0, val),
+                        _ => Err(MemException::Unexpected),
                     }
                 }
             };
         }
 
-        impl Memory for Ts7200Bus {
-            fn device(&self) -> &'static str {
+        impl Device for Ts7200Bus {
+            fn kind(&self) -> &'static str {
                 "Ts7200"
             }
 
-            fn id_of(&self, offset: u32) -> Option<String> {
+            fn probe(&self, offset: u32) -> Probe {
                 match offset {
-                    $($start..=$end => crate::id_of_subdevice!(self.$device, offset - $start),)*
-                    _ => None,
+                    $($start..=$end => {
+                        Probe::Device {
+                            device: &self.$device,
+                            next: Box::new(self.$device.probe(offset - $start))
+                        }
+                    })*
+                    _ => Probe::Unmapped,
                 }
             }
+        }
 
+        impl Memory for Ts7200Bus {
             impl_ts7200_memory_r!(r8, u8);
             impl_ts7200_memory_r!(r16, u16);
             impl_ts7200_memory_r!(r32, u32);

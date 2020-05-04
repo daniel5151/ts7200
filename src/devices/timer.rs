@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
-use crate::memory::{MemException::*, MemResult, Memory};
+use crate::memory::{Device, MemException::*, MemResult, Memory, Probe};
 
 use super::vic::Interrupt;
 
@@ -180,8 +180,8 @@ impl Timer {
     }
 }
 
-impl Memory for Timer {
-    fn device(&self) -> &'static str {
+impl Device for Timer {
+    fn kind(&self) -> &'static str {
         "Timer"
     }
 
@@ -189,17 +189,19 @@ impl Memory for Timer {
         Some(self.label)
     }
 
-    fn id_of(&self, offset: u32) -> Option<String> {
+    fn probe(&self, offset: u32) -> Probe<'_> {
         let reg = match offset {
             0x00 => "Load",
             0x04 => "Value",
             0x08 => "Control",
             0x0C => "Clear",
-            _ => return None,
+            _ => return Probe::Unmapped,
         };
-        Some(reg.to_string())
+        Probe::Register(reg)
     }
+}
 
+impl Memory for Timer {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         self.update_regs()?;
 
