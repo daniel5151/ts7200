@@ -7,9 +7,10 @@ use log::*;
 use crate::devices;
 use crate::devices::vic::Interrupt;
 use crate::memory::{
-    util::MemSniffer, Device, MemAccess, MemAccessKind, MemAccessVal, MemException, MemResult,
-    Memory, Probe,
+    util::MemSniffer, Device, MemAccess, MemAccessKind, MemException, MemResult, Memory, Probe,
 };
+
+mod gdb;
 
 // Values grafted from hardware. May vary a couple of bytes here and there, but
 // they're close enough.
@@ -193,104 +194,25 @@ impl Ts7200 {
         };
     }
 
-    /// Run the system, returning successfully on "graceful exit".
+    /// Run the system for a single CPU instruction, returning `true` if the
+    /// system is still running, or `false` upon exiting to the bootloader.
     ///
-    /// In HLE mode, a "graceful exit" is when the PC points into the
-    /// bootloader's code.
-    pub fn run(&mut self) -> Result<(), FatalError> {
-        loop {
-            if self.hle {
-                let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
-                if pc == HLE_BOOTLOADER_LR {
-                    info!("Successfully returned to bootloader");
-                    info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
-                    return Ok(());
-                }
-            }
-
-            use crate::devices::syscon::PowerState;
-            match self.devices.syscon.power_state() {
-                PowerState::Run => {
-                    let mut mem = MemoryAdapter::new(&mut self.devices);
-                    self.cpu.step(&mut mem);
-                    if let Some(e) = mem.take_exception() {
-                        Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
-                    }
-                    self.check_device_interrupts(BlockMode::NonBlocking);
-                }
-                PowerState::Halt => {
-                    self.check_device_interrupts(BlockMode::Blocking);
-                    if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
-                        self.devices.syscon.set_run_mode();
-                    };
-                }
-                PowerState::Standby => {
-                    return Err(FatalError::UnimplementedPowerState(PowerState::Standby))
-                }
-            };
-        }
-    }
-
-    pub fn devices_mut(&mut self) -> &mut Ts7200Bus {
-        &mut self.devices
-    }
-}
-
-use gdbstub::{Access as GdbStubAccess, AccessKind as GdbStubAccessKind, Target, TargetState};
-
-impl Target for Ts7200 {
-    type Usize = u32;
-    type Error = FatalError;
-
-    fn target_description_xml() -> Option<&'static str> {
-        Some(r#"<target version="1.0"><architecture>armv4t</architecture></target>"#)
-    }
-
-    fn step(
-        &mut self,
-        mut log_mem_access: impl FnMut(GdbStubAccess<u32>),
-    ) -> Result<TargetState, Self::Error> {
+    /// The `log_memory_access` parameter is present to support re-using this
+    /// step method in the gdbstub.
+    pub fn step(&mut self, log_memory_access: impl FnMut(MemAccess)) -> Result<bool, FatalError> {
         if self.hle {
             let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
             if pc == HLE_BOOTLOADER_LR {
                 info!("Successfully returned to bootloader");
                 info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
-                return Ok(TargetState::Halted);
+                return Ok(false);
             }
         }
-
-        let log_access_to_gdb = |access: MemAccess| {
-            let mut push = |offset, val| {
-                log_mem_access(GdbStubAccess {
-                    kind: match access.kind {
-                        MemAccessKind::Read => GdbStubAccessKind::Read,
-                        MemAccessKind::Write => GdbStubAccessKind::Write,
-                    },
-                    addr: offset,
-                    val,
-                })
-            };
-
-            // transform multi-byte accesses into their constituent single-byte accesses
-            match access.val {
-                MemAccessVal::U8(val) => push(access.offset, val),
-                MemAccessVal::U16(val) => val
-                    .to_le_bytes()
-                    .iter()
-                    .enumerate()
-                    .for_each(|(i, b)| push(access.offset + i as u32, *b)),
-                MemAccessVal::U32(val) => val
-                    .to_le_bytes()
-                    .iter()
-                    .enumerate()
-                    .for_each(|(i, b)| push(access.offset + i as u32, *b)),
-            }
-        };
 
         use crate::devices::syscon::PowerState;
         match self.devices.syscon.power_state() {
             PowerState::Run => {
-                let mut sniffer = MemSniffer::new(&mut self.devices, log_access_to_gdb);
+                let mut sniffer = MemSniffer::new(&mut self.devices, log_memory_access);
                 let mut mem = MemoryAdapter::new(&mut sniffer);
                 self.cpu.step(&mut mem);
                 if let Some(e) = mem.take_exception() {
@@ -301,7 +223,7 @@ impl Target for Ts7200 {
             PowerState::Halt => {
                 // unlike `run`, we do _not_ want to block the gdb thread waiting
                 // for an exception.
-                self.check_device_interrupts(BlockMode::NonBlocking);
+                self.check_device_interrupts(BlockMode::Blocking);
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
                 };
@@ -311,85 +233,20 @@ impl Target for Ts7200 {
             }
         };
 
-        Ok(TargetState::Running)
+        Ok(true)
     }
 
-    // order specified in binutils-gdb/blob/master/gdb/features/arm/arm-core.xml
-    fn read_registers(&mut self, mut push_reg: impl FnMut(&[u8])) {
-        let mode = self.cpu.mode();
-        for i in 0..13 {
-            push_reg(&self.cpu.reg_get(mode, i).to_le_bytes());
-        }
-        push_reg(&self.cpu.reg_get(mode, reg::SP).to_le_bytes()); // 13
-        push_reg(&self.cpu.reg_get(mode, reg::LR).to_le_bytes()); // 14
-        push_reg(&self.cpu.reg_get(mode, reg::PC).to_le_bytes()); // 15
-
-        // Floating point registers, unused
-        for _ in 0..25 {
-            push_reg(&[0, 0, 0, 0]);
-        }
-
-        push_reg(&self.cpu.reg_get(mode, reg::CPSR).to_le_bytes());
+    /// Run the system, returning successfully on "graceful exit".
+    ///
+    /// In HLE mode, a "graceful exit" is when the PC points into the
+    /// bootloader's code.
+    pub fn run(&mut self) -> Result<(), FatalError> {
+        while self.step(|_| ())? {}
+        Ok(())
     }
 
-    fn write_registers(&mut self, regs: &[u8]) {
-        if regs.len() != (16 + 25 + 1) * 4 {
-            error!("Wrong data length for write_registers: {}", regs.len());
-            return;
-        }
-        let mut next = {
-            let mut idx: usize = 0;
-            move || {
-                use std::convert::TryInto;
-                idx += 4;
-                u32::from_le_bytes(regs[idx - 4..idx].try_into().unwrap())
-            }
-        };
-        let mode = self.cpu.mode();
-        for i in 0..13 {
-            self.cpu.reg_set(mode, i, next());
-        }
-        self.cpu.reg_set(mode, reg::SP, next());
-        self.cpu.reg_set(mode, reg::LR, next());
-        self.cpu.reg_set(mode, reg::PC, next());
-        // Floating point registers, unused
-        for _ in 0..25 {
-            next();
-        }
-
-        self.cpu.reg_set(mode, reg::CPSR, next());
-    }
-
-    fn read_pc(&mut self) -> u32 {
-        self.cpu.reg_get(self.cpu.mode(), reg::PC)
-    }
-
-    fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
-        for addr in addr {
-            // TODO: handle non-ram accesses better
-            if addr > 0x01ff_ffff {
-                push_byte(0xFE);
-                continue;
-            }
-
-            match self.devices.r8(addr) {
-                Ok(val) => push_byte(val),
-                Err(_) => {
-                    // the only errors that RAM emits are accessing uninitialized memory, which gdb
-                    // will do _a lot_. We'll just squelch these errors...
-                    push_byte(0x00)
-                }
-            };
-        }
-    }
-
-    fn write_addrs(&mut self, mut get_addr_val: impl FnMut() -> Option<(u32, u8)>) {
-        while let Some((addr, val)) = get_addr_val() {
-            match self.devices.w8(addr, val) {
-                Ok(_) => {}
-                Err(e) => warn!("gdbstub write_addrs memory exception: {:?}", e),
-            };
-        }
+    pub fn devices_mut(&mut self) -> &mut Ts7200Bus {
+        &mut self.devices
     }
 }
 

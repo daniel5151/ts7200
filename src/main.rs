@@ -7,10 +7,10 @@ use structopt::StructOpt;
 
 pub mod devices;
 pub mod memory;
-pub mod ts7200;
+pub mod sys;
 
 use crate::devices::uart;
-use crate::ts7200::Ts7200;
+use crate::sys::ts7200::Ts7200;
 
 #[derive(StructOpt)]
 #[structopt(name = "ts7200")]
