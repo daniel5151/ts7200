@@ -4,7 +4,8 @@ pub mod vicmanager;
 pub use interrupts::Interrupt;
 pub use vicmanager::VicManager;
 
-use crate::memory::{Device, MemException::*, MemResult, Memory, Probe};
+use crate::devices::{Device, Probe};
+use crate::memory::{MemException::*, MemResult, Memory};
 
 #[derive(Debug, Default)]
 struct VectorEntry {

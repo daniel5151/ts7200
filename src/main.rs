@@ -8,6 +8,7 @@ use structopt::StructOpt;
 pub mod devices;
 pub mod memory;
 pub mod sys;
+pub mod util;
 
 use crate::devices::uart;
 use crate::sys::ts7200::Ts7200;

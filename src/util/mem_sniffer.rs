@@ -1,9 +1,10 @@
-use crate::memory::{Device, MemAccess, MemResult, Memory, Probe};
+use crate::devices::{Device, Probe};
+use crate::memory::{MemAccess, MemResult, Memory};
 
 /// [MemSniffer] wraps a [Memory] object, forwarding requests to the underlying
 /// memory object, while also recording accesses to the provided callback.
 #[derive(Debug)]
-pub struct MemSniffer<'a, M: Memory, F: FnMut(MemAccess)> {
+pub struct MemSniffer<'a, M, F: FnMut(MemAccess)> {
     mem: &'a mut M,
     on_access: F,
 }
@@ -34,7 +35,7 @@ macro_rules! impl_memsniff_w {
     };
 }
 
-impl<'a, M: Device + Memory, F: FnMut(MemAccess)> Device for MemSniffer<'a, M, F> {
+impl<'a, M: Device, F: FnMut(MemAccess)> Device for MemSniffer<'a, M, F> {
     fn kind(&self) -> &'static str {
         self.mem.kind()
     }

@@ -1,6 +1,7 @@
 use log::*;
 
-use crate::memory::{Device, MemAccess, MemResult, Memory, Probe};
+use crate::devices::{Device, Probe};
+use crate::memory::{MemAccess, MemResult, Memory};
 
 /// A transparent wrapper around memory objects that logs any reads / writes.
 ///

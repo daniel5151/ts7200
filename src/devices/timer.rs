@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel as chan;
 
-use crate::memory::{Device, MemException::*, MemResult, Memory, Probe};
+use crate::devices::{Device, Probe};
+use crate::memory::{MemException::*, MemResult, Memory};
 
 use super::vic::Interrupt;
 

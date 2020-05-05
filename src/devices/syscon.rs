@@ -1,4 +1,5 @@
-use crate::memory::{Device, MemException::*, MemResult, Memory, Probe};
+use crate::devices::{Device, Probe};
+use crate::memory::{MemException::*, MemResult, Memory};
 
 /// EP9302 Power States (see page 5-10)
 #[derive(Debug, Clone, Copy)]

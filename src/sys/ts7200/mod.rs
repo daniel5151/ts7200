@@ -6,11 +6,12 @@ use log::*;
 
 use crate::devices;
 use crate::devices::vic::Interrupt;
+use crate::devices::{Device, Probe};
 use crate::memory::{
     armv4t_adaptor::{MemoryAdapter, MemoryAdapterException},
-    util::MemSniffer,
-    Device, MemAccess, MemAccessKind, MemException, MemResult, Memory, Probe,
+    MemAccess, MemAccessKind, MemException, MemResult, Memory,
 };
+use crate::util::MemSniffer;
 
 mod gdb;
 

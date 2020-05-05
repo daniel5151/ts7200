@@ -2,10 +2,10 @@ use std::vec::Vec;
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use crate::devices::{Device, Probe};
 use crate::memory::{
-    Device,
     MemException::{self, *},
-    MemResult, Memory, Probe,
+    MemResult, Memory,
 };
 
 /// Basic fixed-size RAM module.

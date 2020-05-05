@@ -1,4 +1,5 @@
-use crate::memory::{Device, MemResult, Memory, Probe};
+use crate::devices::{Device, Probe};
+use crate::memory::{MemResult, Memory};
 
 use super::{Interrupt, Vic};
 
