@@ -1,3 +1,4 @@
+pub mod armv4t_adaptor;
 pub mod util;
 
 mod access;

@@ -1,13 +1,15 @@
 use std::io::Read;
 
-use armv4t_emu::{reg, Cpu, Exception, Memory as ArmMemory, Mode as ArmMode};
+use armv4t_emu::{reg, Cpu, Exception, Mode as ArmMode};
 use crossbeam_channel as chan;
 use log::*;
 
 use crate::devices;
 use crate::devices::vic::Interrupt;
 use crate::memory::{
-    util::MemSniffer, Device, MemAccess, MemAccessKind, MemException, MemResult, Memory, Probe,
+    armv4t_adaptor::{MemoryAdapter, MemoryAdapterException},
+    util::MemSniffer,
+    Device, MemAccess, MemAccessKind, MemException, MemResult, Memory, Probe,
 };
 
 mod gdb;
@@ -110,7 +112,7 @@ impl Ts7200 {
 
     fn handle_mem_exception(
         cpu: &Cpu,
-        mem: &(impl Memory + Device),
+        mem: &impl Device,
         exception: MemoryAdapterException,
     ) -> Result<(), FatalError> {
         let MemoryAdapterException {
@@ -216,7 +218,7 @@ impl Ts7200 {
                 let mut mem = MemoryAdapter::new(&mut sniffer);
                 self.cpu.step(&mut mem);
                 if let Some(e) = mem.take_exception() {
-                    Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
+                    Ts7200::handle_mem_exception(&self.cpu, &self.devices, e)?;
                 }
                 self.check_device_interrupts(BlockMode::NonBlocking);
             }
@@ -347,93 +349,4 @@ ts7200_mmap! {
     0x808c_0000..=0x808c_ffff => uart1,
     0x808d_0000..=0x808d_ffff => uart2,
     0x8093_0000..=0x8093_ffff => syscon,
-}
-
-struct MemoryAdapterException {
-    addr: u32,
-    kind: MemAccessKind,
-    mem_except: MemException,
-}
-
-/// The CPU's Memory interface expects all memory accesses to succeed (i.e:
-/// return _some_ sort of value). As such, there needs to be some sort of shim
-/// between the emulator's fallible [Memory] interface and the CPU's infallible
-/// [ArmMemory] interface.
-///
-/// [MemoryAdapter] wraps a [Memory] object, implementing the [ArmMemory]
-/// interface such that if an error occurs while accessing memory, the access
-/// will still "succeed," with the corresponding exception being stored until
-/// after the CPU cycle is executed. The `take_exception` method can then be
-/// used to check if an exception occured.
-struct MemoryAdapter<'a, M: Memory> {
-    mem: &'a mut M,
-    exception: Option<MemoryAdapterException>,
-}
-
-impl<'a, M: Memory> MemoryAdapter<'a, M> {
-    pub fn new(mem: &'a mut M) -> Self {
-        MemoryAdapter {
-            mem,
-            exception: None,
-        }
-    }
-
-    pub fn take_exception(&mut self) -> Option<MemoryAdapterException> {
-        self.exception.take()
-    }
-}
-
-macro_rules! impl_memadapter_r {
-    ($fn:ident, $ret:ty) => {
-        fn $fn(&mut self, addr: u32) -> $ret {
-            use crate::memory::MemAccessKind;
-            match self.mem.$fn(addr) {
-                Ok(val) => val,
-                Err(e) => {
-                    // If it's a stubbed-read, pass through the stubbed value
-                    let ret = match e {
-                        MemException::StubRead(v) => v as $ret,
-                        MemException::ContractViolation { stub_val, .. } => match stub_val {
-                            Some(v) => v as $ret,
-                            None => 0x00,
-                        },
-                        _ => 0x00, // contents of register undefined
-                    };
-                    self.exception = Some(MemoryAdapterException {
-                        addr,
-                        kind: MemAccessKind::Read,
-                        mem_except: e,
-                    });
-                    ret
-                }
-            }
-        }
-    };
-}
-
-macro_rules! impl_memadapter_w {
-    ($fn:ident, $val:ty) => {
-        fn $fn(&mut self, addr: u32, val: $val) {
-            use crate::memory::MemAccessKind;
-            match self.mem.$fn(addr, val) {
-                Ok(()) => {}
-                Err(e) => {
-                    self.exception = Some(MemoryAdapterException {
-                        addr,
-                        kind: MemAccessKind::Write,
-                        mem_except: e,
-                    });
-                }
-            }
-        }
-    };
-}
-
-impl<'a, M: Memory> ArmMemory for MemoryAdapter<'a, M> {
-    impl_memadapter_r!(r8, u8);
-    impl_memadapter_r!(r16, u16);
-    impl_memadapter_r!(r32, u32);
-    impl_memadapter_w!(w8, u8);
-    impl_memadapter_w!(w16, u16);
-    impl_memadapter_w!(w32, u32);
 }
