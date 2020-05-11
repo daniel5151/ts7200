@@ -1,3 +1,4 @@
+use crate::devices::{Device, Probe};
 use crate::memory::{MemException::*, MemResult, Memory};
 
 /// EP9302 Power States (see page 5-10)
@@ -42,12 +43,12 @@ impl Syscon {
     }
 }
 
-impl Memory for Syscon {
-    fn device(&self) -> &'static str {
+impl Device for Syscon {
+    fn kind(&self) -> &'static str {
         "System Controller"
     }
 
-    fn id_of(&self, offset: u32) -> Option<String> {
+    fn probe(&self, offset: u32) -> Probe<'_> {
         let reg = match offset {
             0x00 => "PwrSts",
             0x04 => "PwrCnt",
@@ -70,11 +71,14 @@ impl Memory for Syscon {
             0x94 => "ChipID",
             0x9C => "SysCfg",
             0xC0 => "SysSWLock",
-            _ => return None,
+            _ => return Probe::Unmapped,
         };
-        Some(reg.to_string())
-    }
 
+        Probe::Register(reg)
+    }
+}
+
+impl Memory for Syscon {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             0x00 => Err(Unimplemented),

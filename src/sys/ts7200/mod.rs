@@ -1,14 +1,19 @@
 use std::io::Read;
 
-use armv4t_emu::{reg, Cpu, Exception, Memory as ArmMemory, Mode as ArmMode};
+use armv4t_emu::{reg, Cpu, Exception, Mode as ArmMode};
 use crossbeam_channel as chan;
 use log::*;
 
 use crate::devices;
 use crate::devices::vic::Interrupt;
+use crate::devices::{Device, Probe};
 use crate::memory::{
-    util::MemSniffer, MemAccess, MemAccessKind, MemAccessVal, MemException, MemResult, Memory,
+    armv4t_adaptor::{MemoryAdapter, MemoryAdapterException},
+    MemAccess, MemAccessKind, MemException, MemResult, Memory,
 };
+use crate::util::MemSniffer;
+
+mod gdb;
 
 // Values grafted from hardware. May vary a couple of bytes here and there, but
 // they're close enough.
@@ -29,7 +34,7 @@ pub enum FatalError {
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
-enum BlockMode {
+pub enum BlockMode {
     Blocking,
     NonBlocking,
 }
@@ -108,7 +113,7 @@ impl Ts7200 {
 
     fn handle_mem_exception(
         cpu: &Cpu,
-        mem: &impl Memory,
+        mem: &impl Device,
         exception: MemoryAdapterException,
     ) -> Result<(), FatalError> {
         let MemoryAdapterException {
@@ -118,10 +123,7 @@ impl Ts7200 {
         } = exception;
 
         let pc = cpu.reg_get(ArmMode::User, reg::PC);
-        let in_mem_space_of = match mem.id_of(addr) {
-            Some(id) => id,
-            None => "<root>".to_string(),
-        };
+        let in_mem_space_of = format!("{}", mem.probe(addr));
 
         let ctx = format!(
             "[pc {:#010x?}][addr {:#010x?}][{}]",
@@ -195,115 +197,35 @@ impl Ts7200 {
         };
     }
 
-    /// Run the system, returning successfully on "graceful exit".
-    ///
-    /// In HLE mode, a "graceful exit" is when the PC points into the
-    /// bootloader's code.
-    pub fn run(&mut self) -> Result<(), FatalError> {
-        loop {
-            if self.hle {
-                let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
-                if pc == HLE_BOOTLOADER_LR {
-                    info!("Successfully returned to bootloader");
-                    info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
-                    return Ok(());
-                }
-            }
-
-            use crate::devices::syscon::PowerState;
-            match self.devices.syscon.power_state() {
-                PowerState::Run => {
-                    let mut mem = MemoryAdapter::new(&mut self.devices);
-                    self.cpu.step(&mut mem);
-                    if let Some(e) = mem.take_exception() {
-                        Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
-                    }
-                    self.check_device_interrupts(BlockMode::NonBlocking);
-                }
-                PowerState::Halt => {
-                    self.check_device_interrupts(BlockMode::Blocking);
-                    if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
-                        self.devices.syscon.set_run_mode();
-                    };
-                }
-                PowerState::Standby => {
-                    return Err(FatalError::UnimplementedPowerState(PowerState::Standby))
-                }
-            };
-        }
-    }
-
-    pub fn devices_mut(&mut self) -> &mut Ts7200Bus {
-        &mut self.devices
-    }
-}
-
-use gdbstub::{Access as GdbStubAccess, AccessKind as GdbStubAccessKind, Target, TargetState};
-
-impl Target for Ts7200 {
-    type Usize = u32;
-    type Error = FatalError;
-
-    fn target_description_xml() -> Option<&'static str> {
-        Some(r#"<target version="1.0"><architecture>armv4t</architecture></target>"#)
-    }
-
-    fn step(
+    /// Run the system for a single CPU instruction, returning `true` if the
+    /// system is still running, or `false` upon exiting to the bootloader.
+    pub fn step(
         &mut self,
-        mut log_mem_access: impl FnMut(GdbStubAccess<u32>),
-    ) -> Result<TargetState, Self::Error> {
+        log_memory_access: impl FnMut(MemAccess),
+        halt_block_mode: BlockMode,
+    ) -> Result<bool, FatalError> {
         if self.hle {
             let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
             if pc == HLE_BOOTLOADER_LR {
                 info!("Successfully returned to bootloader");
                 info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
-                return Ok(TargetState::Halted);
+                return Ok(false);
             }
         }
-
-        let log_access_to_gdb = |access: MemAccess| {
-            let mut push = |offset, val| {
-                log_mem_access(GdbStubAccess {
-                    kind: match access.kind {
-                        MemAccessKind::Read => GdbStubAccessKind::Read,
-                        MemAccessKind::Write => GdbStubAccessKind::Write,
-                    },
-                    addr: offset,
-                    val,
-                })
-            };
-
-            // transform multi-byte accesses into their constituent single-byte accesses
-            match access.val {
-                MemAccessVal::U8(val) => push(access.offset, val),
-                MemAccessVal::U16(val) => val
-                    .to_le_bytes()
-                    .iter()
-                    .enumerate()
-                    .for_each(|(i, b)| push(access.offset + i as u32, *b)),
-                MemAccessVal::U32(val) => val
-                    .to_le_bytes()
-                    .iter()
-                    .enumerate()
-                    .for_each(|(i, b)| push(access.offset + i as u32, *b)),
-            }
-        };
 
         use crate::devices::syscon::PowerState;
         match self.devices.syscon.power_state() {
             PowerState::Run => {
-                let mut sniffer = MemSniffer::new(&mut self.devices, log_access_to_gdb);
+                let mut sniffer = MemSniffer::new(&mut self.devices, log_memory_access);
                 let mut mem = MemoryAdapter::new(&mut sniffer);
                 self.cpu.step(&mut mem);
                 if let Some(e) = mem.take_exception() {
-                    Ts7200::handle_mem_exception(&self.cpu, mem.mem, e)?;
+                    Ts7200::handle_mem_exception(&self.cpu, &self.devices, e)?;
                 }
                 self.check_device_interrupts(BlockMode::NonBlocking);
             }
             PowerState::Halt => {
-                // unlike `run`, we do _not_ want to block the gdb thread waiting
-                // for an exception.
-                self.check_device_interrupts(BlockMode::NonBlocking);
+                self.check_device_interrupts(halt_block_mode);
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
                 };
@@ -313,85 +235,20 @@ impl Target for Ts7200 {
             }
         };
 
-        Ok(TargetState::Running)
+        Ok(true)
     }
 
-    // order specified in binutils-gdb/blob/master/gdb/features/arm/arm-core.xml
-    fn read_registers(&mut self, mut push_reg: impl FnMut(&[u8])) {
-        let mode = self.cpu.mode();
-        for i in 0..13 {
-            push_reg(&self.cpu.reg_get(mode, i).to_le_bytes());
-        }
-        push_reg(&self.cpu.reg_get(mode, reg::SP).to_le_bytes()); // 13
-        push_reg(&self.cpu.reg_get(mode, reg::LR).to_le_bytes()); // 14
-        push_reg(&self.cpu.reg_get(mode, reg::PC).to_le_bytes()); // 15
-
-        // Floating point registers, unused
-        for _ in 0..25 {
-            push_reg(&[0, 0, 0, 0]);
-        }
-
-        push_reg(&self.cpu.reg_get(mode, reg::CPSR).to_le_bytes());
+    /// Run the system, returning successfully on "graceful exit".
+    ///
+    /// In HLE mode, a "graceful exit" is when the PC points into the
+    /// bootloader's code.
+    pub fn run(&mut self) -> Result<(), FatalError> {
+        while self.step(|_| (), BlockMode::Blocking)? {}
+        Ok(())
     }
 
-    fn write_registers(&mut self, regs: &[u8]) {
-        if regs.len() != (16 + 25 + 1) * 4 {
-            error!("Wrong data length for write_registers: {}", regs.len());
-            return;
-        }
-        let mut next = {
-            let mut idx: usize = 0;
-            move || {
-                use std::convert::TryInto;
-                idx += 4;
-                u32::from_le_bytes(regs[idx - 4..idx].try_into().unwrap())
-            }
-        };
-        let mode = self.cpu.mode();
-        for i in 0..13 {
-            self.cpu.reg_set(mode, i, next());
-        }
-        self.cpu.reg_set(mode, reg::SP, next());
-        self.cpu.reg_set(mode, reg::LR, next());
-        self.cpu.reg_set(mode, reg::PC, next());
-        // Floating point registers, unused
-        for _ in 0..25 {
-            next();
-        }
-
-        self.cpu.reg_set(mode, reg::CPSR, next());
-    }
-
-    fn read_pc(&mut self) -> u32 {
-        self.cpu.reg_get(self.cpu.mode(), reg::PC)
-    }
-
-    fn read_addrs(&mut self, addr: std::ops::Range<u32>, mut push_byte: impl FnMut(u8)) {
-        for addr in addr {
-            // TODO: handle non-ram accesses better
-            if addr > 0x01ff_ffff {
-                push_byte(0xFE);
-                continue;
-            }
-
-            match self.devices.r8(addr) {
-                Ok(val) => push_byte(val),
-                Err(_) => {
-                    // the only errors that RAM emits are accessing uninitialized memory, which gdb
-                    // will do _a lot_. We'll just squelch these errors...
-                    push_byte(0x00)
-                }
-            };
-        }
-    }
-
-    fn write_addrs(&mut self, mut get_addr_val: impl FnMut() -> Option<(u32, u8)>) {
-        while let Some((addr, val)) = get_addr_val() {
-            match self.devices.w8(addr, val) {
-                Ok(_) => {}
-                Err(e) => warn!("gdbstub write_addrs memory exception: {:?}", e),
-            };
-        }
+    pub fn devices_mut(&mut self) -> &mut Ts7200Bus {
+        &mut self.devices
     }
 }
 
@@ -436,7 +293,7 @@ macro_rules! ts7200_mmap {
                 fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
                     match addr {
                         $($start..=$end => self.$device.$fn(addr - $start),)*
-                        _ => devices::UnmappedMemory.$fn(addr - 0),
+                        _ => Err(MemException::Unexpected),
                     }
                 }
             };
@@ -447,24 +304,31 @@ macro_rules! ts7200_mmap {
                 fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
                     match addr {
                         $($start..=$end => self.$device.$fn(addr - $start, val),)*
-                        _ => devices::UnmappedMemory.$fn(addr - 0, val),
+                        _ => Err(MemException::Unexpected),
                     }
                 }
             };
         }
 
-        impl Memory for Ts7200Bus {
-            fn device(&self) -> &'static str {
+        impl Device for Ts7200Bus {
+            fn kind(&self) -> &'static str {
                 "Ts7200"
             }
 
-            fn id_of(&self, offset: u32) -> Option<String> {
+            fn probe(&self, offset: u32) -> Probe {
                 match offset {
-                    $($start..=$end => crate::id_of_subdevice!(self.$device, offset - $start),)*
-                    _ => None,
+                    $($start..=$end => {
+                        Probe::Device {
+                            device: &self.$device,
+                            next: Box::new(self.$device.probe(offset - $start))
+                        }
+                    })*
+                    _ => Probe::Unmapped,
                 }
             }
+        }
 
+        impl Memory for Ts7200Bus {
             impl_ts7200_memory_r!(r8, u8);
             impl_ts7200_memory_r!(r16, u16);
             impl_ts7200_memory_r!(r32, u32);
@@ -485,93 +349,4 @@ ts7200_mmap! {
     0x808c_0000..=0x808c_ffff => uart1,
     0x808d_0000..=0x808d_ffff => uart2,
     0x8093_0000..=0x8093_ffff => syscon,
-}
-
-struct MemoryAdapterException {
-    addr: u32,
-    kind: MemAccessKind,
-    mem_except: MemException,
-}
-
-/// The CPU's Memory interface expects all memory accesses to succeed (i.e:
-/// return _some_ sort of value). As such, there needs to be some sort of shim
-/// between the emulator's fallible [Memory] interface and the CPU's infallible
-/// [ArmMemory] interface.
-///
-/// [MemoryAdapter] wraps a [Memory] object, implementing the [ArmMemory]
-/// interface such that if an error occurs while accessing memory, the access
-/// will still "succeed," with the corresponding exception being stored until
-/// after the CPU cycle is executed. The `take_exception` method can then be
-/// used to check if an exception occured.
-struct MemoryAdapter<'a, M: Memory> {
-    mem: &'a mut M,
-    exception: Option<MemoryAdapterException>,
-}
-
-impl<'a, M: Memory> MemoryAdapter<'a, M> {
-    pub fn new(mem: &'a mut M) -> Self {
-        MemoryAdapter {
-            mem,
-            exception: None,
-        }
-    }
-
-    pub fn take_exception(&mut self) -> Option<MemoryAdapterException> {
-        self.exception.take()
-    }
-}
-
-macro_rules! impl_memadapter_r {
-    ($fn:ident, $ret:ty) => {
-        fn $fn(&mut self, addr: u32) -> $ret {
-            use crate::memory::MemAccessKind;
-            match self.mem.$fn(addr) {
-                Ok(val) => val,
-                Err(e) => {
-                    // If it's a stubbed-read, pass through the stubbed value
-                    let ret = match e {
-                        MemException::StubRead(v) => v as $ret,
-                        MemException::ContractViolation { stub_val, .. } => match stub_val {
-                            Some(v) => v as $ret,
-                            None => 0x00,
-                        },
-                        _ => 0x00, // contents of register undefined
-                    };
-                    self.exception = Some(MemoryAdapterException {
-                        addr,
-                        kind: MemAccessKind::Read,
-                        mem_except: e,
-                    });
-                    ret
-                }
-            }
-        }
-    };
-}
-
-macro_rules! impl_memadapter_w {
-    ($fn:ident, $val:ty) => {
-        fn $fn(&mut self, addr: u32, val: $val) {
-            use crate::memory::MemAccessKind;
-            match self.mem.$fn(addr, val) {
-                Ok(()) => {}
-                Err(e) => {
-                    self.exception = Some(MemoryAdapterException {
-                        addr,
-                        kind: MemAccessKind::Write,
-                        mem_except: e,
-                    });
-                }
-            }
-        }
-    };
-}
-
-impl<'a, M: Memory> ArmMemory for MemoryAdapter<'a, M> {
-    impl_memadapter_r!(r8, u8);
-    impl_memadapter_r!(r16, u16);
-    impl_memadapter_r!(r32, u32);
-    impl_memadapter_w!(w8, u8);
-    impl_memadapter_w!(w16, u16);
-    impl_memadapter_w!(w32, u32);
 }

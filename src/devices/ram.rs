@@ -2,6 +2,7 @@ use std::vec::Vec;
 
 use byteorder::{ByteOrder, LittleEndian};
 
+use crate::devices::{Device, Probe};
 use crate::memory::{
     MemException::{self, *},
     MemResult, Memory,
@@ -70,15 +71,19 @@ impl Ram {
     }
 }
 
-impl Memory for Ram {
-    fn device(&self) -> &'static str {
+impl Device for Ram {
+    fn kind(&self) -> &'static str {
         "Ram"
     }
 
-    fn id_of(&self, _offset: u32) -> Option<String> {
-        None
-    }
+    fn probe(&self, offset: u32) -> Probe<'_> {
+        assert!((offset as usize) < self.mem.len());
 
+        Probe::Register("<data>")
+    }
+}
+
+impl Memory for Ram {
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         let offset = offset as usize;
         let val = self.mem[offset];

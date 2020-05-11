@@ -1,3 +1,4 @@
+use crate::devices::{Device, Probe};
 use crate::memory::{MemResult, Memory};
 
 use super::{Interrupt, Vic};
@@ -50,19 +51,28 @@ impl VicManager {
         self.bank(int.bank()).clear_interrupt(int.index())
     }
 }
-impl Memory for VicManager {
-    fn device(&self) -> &'static str {
+
+impl Device for VicManager {
+    fn kind(&self) -> &'static str {
         "VicManager"
     }
 
-    fn id_of(&self, offset: u32) -> Option<String> {
+    fn probe(&self, offset: u32) -> Probe<'_> {
         if offset < 0x10000 {
-            crate::id_of_subdevice!(self.vic1, offset)
+            Probe::Device {
+                device: &self.vic1,
+                next: Box::new(self.vic1.probe(offset)),
+            }
         } else {
-            crate::id_of_subdevice!(self.vic2, offset - 0x10000)
+            Probe::Device {
+                device: &self.vic2,
+                next: Box::new(self.vic2.probe(offset - 0x10000)),
+            }
         }
     }
+}
 
+impl Memory for VicManager {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         match offset {
             0x30 => {

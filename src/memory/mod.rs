@@ -1,5 +1,4 @@
-pub mod macros;
-pub mod util;
+pub mod armv4t_adaptor;
 
 mod access;
 mod exception;
@@ -12,26 +11,6 @@ pub use exception::{MemException, MemResult};
 /// Default implementations for 8-bit and 16-bit read/write return a
 /// [MemException::Misaligned] if the address isn't aligned properly.
 pub trait Memory {
-    /// The name of the emulated device
-    fn device(&self) -> &'static str;
-
-    /// A descriptive string for a particular instance of the device (if
-    /// applicable)
-    fn label(&self) -> Option<&str> {
-        None
-    }
-
-    /// Returns the string "<device>:<label>"
-    fn id(&self) -> String {
-        match self.label() {
-            Some(label) => format!("{}:{}", self.device(), label),
-            None => self.device().to_string(),
-        }
-    }
-
-    /// Get the id of the device at the provided offset
-    fn id_of(&self, offset: u32) -> Option<String>;
-
     /// Read a 32 bit value at a given offset
     fn r32(&mut self, offset: u32) -> MemResult<u32>;
     /// Write a 32 bit value to the given offset
@@ -74,40 +53,35 @@ pub trait Memory {
     }
 }
 
-impl Memory for Box<dyn Memory> {
-    fn device(&self) -> &'static str {
-        (**self).device()
-    }
+macro_rules! impl_memfwd {
+    ($type:ty) => {
+        impl Memory for $type {
+            fn r32(&mut self, offset: u32) -> MemResult<u32> {
+                (**self).r32(offset)
+            }
 
-    fn label(&self) -> Option<&str> {
-        (**self).label()
-    }
+            fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
+                (**self).w32(offset, val)
+            }
 
-    fn id_of(&self, offset: u32) -> Option<String> {
-        (**self).id_of(offset)
-    }
+            fn r8(&mut self, offset: u32) -> MemResult<u8> {
+                (**self).r8(offset)
+            }
 
-    fn r32(&mut self, offset: u32) -> MemResult<u32> {
-        (**self).r32(offset)
-    }
+            fn r16(&mut self, offset: u32) -> MemResult<u16> {
+                (**self).r16(offset)
+            }
 
-    fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
-        (**self).w32(offset, val)
-    }
+            fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
+                (**self).w8(offset, val)
+            }
 
-    fn r8(&mut self, offset: u32) -> MemResult<u8> {
-        (**self).r8(offset)
-    }
-
-    fn r16(&mut self, offset: u32) -> MemResult<u16> {
-        (**self).r16(offset)
-    }
-
-    fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
-        (**self).w8(offset, val)
-    }
-
-    fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
-        (**self).w16(offset, val)
-    }
+            fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
+                (**self).w16(offset, val)
+            }
+        }
+    };
 }
+
+impl_memfwd!(Box<dyn Memory>);
+impl_memfwd!(&mut dyn Memory);
