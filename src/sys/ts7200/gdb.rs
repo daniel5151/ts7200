@@ -2,7 +2,7 @@ use armv4t_emu::reg;
 use gdbstub::{Access as GdbStubAccess, Target, TargetState};
 use log::*;
 
-use super::{FatalError, Ts7200};
+use super::{BlockMode, FatalError, Ts7200};
 use crate::memory::{MemAccess, MemAccessKind, MemAccessVal, Memory};
 
 impl Target for Ts7200 {
@@ -46,7 +46,7 @@ impl Target for Ts7200 {
             }
         };
 
-        if self.step(log_access_to_gdb)? {
+        if self.step(log_access_to_gdb, BlockMode::NonBlocking)? {
             Ok(TargetState::Running)
         } else {
             Ok(TargetState::Halted)

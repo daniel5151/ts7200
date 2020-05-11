@@ -34,7 +34,7 @@ pub enum FatalError {
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
-enum BlockMode {
+pub enum BlockMode {
     Blocking,
     NonBlocking,
 }
@@ -199,10 +199,11 @@ impl Ts7200 {
 
     /// Run the system for a single CPU instruction, returning `true` if the
     /// system is still running, or `false` upon exiting to the bootloader.
-    ///
-    /// The `log_memory_access` parameter is present to support re-using this
-    /// step method in the gdbstub.
-    pub fn step(&mut self, log_memory_access: impl FnMut(MemAccess)) -> Result<bool, FatalError> {
+    pub fn step(
+        &mut self,
+        log_memory_access: impl FnMut(MemAccess),
+        halt_block_mode: BlockMode,
+    ) -> Result<bool, FatalError> {
         if self.hle {
             let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
             if pc == HLE_BOOTLOADER_LR {
@@ -224,9 +225,7 @@ impl Ts7200 {
                 self.check_device_interrupts(BlockMode::NonBlocking);
             }
             PowerState::Halt => {
-                // unlike `run`, we do _not_ want to block the gdb thread waiting
-                // for an exception.
-                self.check_device_interrupts(BlockMode::Blocking);
+                self.check_device_interrupts(halt_block_mode);
                 if self.devices.vicmgr.fiq() || self.devices.vicmgr.irq() {
                     self.devices.syscon.set_run_mode();
                 };
@@ -244,7 +243,7 @@ impl Ts7200 {
     /// In HLE mode, a "graceful exit" is when the PC points into the
     /// bootloader's code.
     pub fn run(&mut self) -> Result<(), FatalError> {
-        while self.step(|_| ())? {}
+        while self.step(|_| (), BlockMode::Blocking)? {}
         Ok(())
     }
 
