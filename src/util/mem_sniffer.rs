@@ -1,17 +1,21 @@
 use crate::devices::{Device, Probe};
 use crate::memory::{MemAccess, MemResult, Memory};
 
-/// [MemSniffer] wraps a [Memory] object, forwarding requests to the underlying
-/// memory object, while also recording accesses to the provided callback.
+/// Wraps a `Memory` object, logging any accesses with the provided callback.
 #[derive(Debug)]
 pub struct MemSniffer<'a, M, F: FnMut(MemAccess)> {
     mem: &'a mut M,
+    addrs: &'a [u32],
     on_access: F,
 }
 
 impl<'a, M: Memory, F: FnMut(MemAccess)> MemSniffer<'a, M, F> {
-    pub fn new(mem: &'a mut M, on_access: F) -> MemSniffer<'a, M, F> {
-        MemSniffer { mem, on_access }
+    pub fn new(mem: &'a mut M, addrs: &'a [u32], on_access: F) -> MemSniffer<'a, M, F> {
+        MemSniffer {
+            mem,
+            addrs,
+            on_access,
+        }
     }
 }
 
@@ -19,7 +23,9 @@ macro_rules! impl_memsniff_r {
     ($fn:ident, $ret:ty) => {
         fn $fn(&mut self, addr: u32) -> MemResult<$ret> {
             let ret = self.mem.$fn(addr)?;
-            (self.on_access)(MemAccess::$fn(addr, ret));
+            if self.addrs.contains(&addr) {
+                (self.on_access)(MemAccess::$fn(addr, ret));
+            }
             Ok(ret)
         }
     };
@@ -29,7 +35,9 @@ macro_rules! impl_memsniff_w {
     ($fn:ident, $val:ty) => {
         fn $fn(&mut self, addr: u32, val: $val) -> MemResult<()> {
             self.mem.$fn(addr, val)?;
-            (self.on_access)(MemAccess::$fn(addr, val));
+            if self.addrs.contains(&addr) {
+                (self.on_access)(MemAccess::$fn(addr, val));
+            }
             Ok(())
         }
     };

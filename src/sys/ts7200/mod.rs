@@ -9,7 +9,7 @@ use crate::devices::vic::Interrupt;
 use crate::devices::{Device, Probe};
 use crate::memory::{
     armv4t_adaptor::{MemoryAdapter, MemoryAdapterException},
-    MemAccess, MemAccessKind, MemException, MemResult, Memory,
+    MemAccessKind, MemException, MemResult, Memory,
 };
 use crate::util::MemSniffer;
 
@@ -34,6 +34,14 @@ pub enum FatalError {
     UnimplementedPowerState(devices::syscon::PowerState),
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Event {
+    Halted,
+    Break,
+    WatchWrite(u32),
+    WatchRead(u32),
+}
+
 pub enum BlockMode {
     Blocking,
     NonBlocking,
@@ -43,9 +51,14 @@ pub enum BlockMode {
 #[derive(Debug)]
 pub struct Ts7200 {
     hle: bool,
+    frozen: bool,
+
     cpu: Cpu,
     devices: Ts7200Bus,
     interrupt_bus: chan::Receiver<(Interrupt, bool)>,
+
+    watchpoints: Vec<u32>,
+    breakpoints: Vec<u32>,
 }
 
 impl Ts7200 {
@@ -105,9 +118,14 @@ impl Ts7200 {
 
         Ok(Ts7200 {
             hle: true,
+            frozen: false,
+
             cpu,
             devices: bus,
             interrupt_bus: interrupt_bus_rx,
+
+            watchpoints: Vec::new(),
+            breakpoints: Vec::new(),
         })
     }
 
@@ -199,30 +217,49 @@ impl Ts7200 {
 
     /// Run the system for a single CPU instruction, returning `true` if the
     /// system is still running, or `false` upon exiting to the bootloader.
-    pub fn step(
-        &mut self,
-        log_memory_access: impl FnMut(MemAccess),
-        halt_block_mode: BlockMode,
-    ) -> Result<bool, FatalError> {
-        if self.hle {
-            let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
-            if pc == HLE_BOOTLOADER_LR {
-                info!("Successfully returned to bootloader");
-                info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
-                return Ok(false);
-            }
+    pub fn step(&mut self, halt_block_mode: BlockMode) -> Result<Option<Event>, FatalError> {
+        if self.frozen {
+            return Ok(None);
         }
 
         use crate::devices::syscon::PowerState;
         match self.devices.syscon.power_state() {
             PowerState::Run => {
-                let mut sniffer = MemSniffer::new(&mut self.devices, log_memory_access);
+                // set up memory sniffer to support watchpoints
+                let mut hit_watchpoint = None;
+                let mut sniffer = MemSniffer::new(&mut self.devices, &self.watchpoints, |access| {
+                    hit_watchpoint = Some(access)
+                });
+
+                // step the system
                 let mut mem = MemoryAdapter::new(&mut sniffer);
                 self.cpu.step(&mut mem);
                 if let Some(e) = mem.take_exception() {
                     Ts7200::handle_mem_exception(&self.cpu, &self.devices, e)?;
                 }
                 self.check_device_interrupts(BlockMode::NonBlocking);
+
+                let pc = self.cpu.reg_get(ArmMode::User, reg::PC);
+
+                // check for HLE exit
+                if self.hle && pc == HLE_BOOTLOADER_LR {
+                    info!("Successfully returned to bootloader");
+                    info!("Return value: {}", self.cpu.reg_get(ArmMode::User, 0));
+                    return Ok(Some(Event::Halted));
+                }
+
+                // check to see if a watchpoint was hit
+                if let Some(access) = hit_watchpoint {
+                    return Ok(Some(match access.kind {
+                        MemAccessKind::Read => Event::WatchRead(access.offset),
+                        MemAccessKind::Write => Event::WatchWrite(access.offset),
+                    }));
+                }
+
+                // check to see if a breakpoint was hit
+                if self.breakpoints.contains(&pc) {
+                    return Ok(Some(Event::Break));
+                }
             }
             PowerState::Halt => {
                 self.check_device_interrupts(halt_block_mode);
@@ -235,7 +272,7 @@ impl Ts7200 {
             }
         };
 
-        Ok(true)
+        Ok(None)
     }
 
     /// Run the system, returning successfully on "graceful exit".
@@ -243,12 +280,20 @@ impl Ts7200 {
     /// In HLE mode, a "graceful exit" is when the PC points into the
     /// bootloader's code.
     pub fn run(&mut self) -> Result<(), FatalError> {
-        while self.step(|_| (), BlockMode::Blocking)? {}
+        while self.step(BlockMode::Blocking)? != Some(Event::Halted) {}
         Ok(())
     }
 
     pub fn devices_mut(&mut self) -> &mut Ts7200Bus {
         &mut self.devices
+    }
+
+    /// Freeze the system such that `step` becomes a noop. Called prior to
+    /// spawning a "post-mortem" GDB session.
+    ///
+    /// WARNING - THERE IS NO WAY TO "THAW" A FROZEN SYSTEM!
+    pub fn freeze(&mut self) {
+        self.frozen = true;
     }
 }
 

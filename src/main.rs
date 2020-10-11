@@ -1,8 +1,12 @@
+#[macro_use]
+extern crate log;
+
 use std::error::Error as StdError;
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 
-use log::*;
+use gdbstub::{DisconnectReason, GdbStub, GdbStubError};
+use log::LevelFilter;
 use structopt::StructOpt;
 
 pub mod devices;
@@ -12,6 +16,8 @@ pub mod util;
 
 use crate::devices::uart;
 use crate::sys::ts7200::Ts7200;
+
+const SYSDUMP_FILENAME: &str = "sysdump.log";
 
 #[derive(StructOpt)]
 #[structopt(name = "ts7200")]
@@ -45,7 +51,7 @@ struct Args {
     /// kernel ELF file to load
     kernel_elf: String,
 
-    /// spawn a gdb server listening on the specified port
+    /// Spawn a gdb server listening on the specified port
     #[structopt(short, long)]
     gdbport: Option<u16>,
 
@@ -62,17 +68,15 @@ struct Args {
     hack_inf_uart_rx: bool,
 }
 
-fn new_tcp_gdbstub<T: gdbstub::Target>(
-    port: u16,
-) -> Result<gdbstub::GdbStub<T, TcpStream>, std::io::Error> {
+fn wait_for_tcp(port: u16) -> Result<TcpStream, Box<dyn StdError>> {
     let sockaddr = format!("127.0.0.1:{}", port);
-    info!("Waiting for a GDB connection on {:?}...", sockaddr);
+    eprintln!("Waiting for a GDB connection on {:?}...", sockaddr);
 
     let sock = TcpListener::bind(sockaddr)?;
     let (stream, addr) = sock.accept()?;
-    info!("Debugger connected from {}", addr);
+    eprintln!("Debugger connected from {}", addr);
 
-    Ok(gdbstub::GdbStub::new(stream))
+    Ok(stream)
 }
 
 fn main() -> Result<(), Box<dyn StdError>> {
@@ -99,21 +103,27 @@ fn main() -> Result<(), Box<dyn StdError>> {
     }
 
     // (potentially) spin up the debugger
-    let debugger = match args.gdbport {
-        Some(port) => Some(new_tcp_gdbstub(port)?),
+    let mut debugger = match args.gdbport {
+        Some(port) => Some(GdbStub::new(wait_for_tcp(port)?)),
         None => None,
     };
 
     let system_result = match debugger {
         // hand off control to the debugger
-        Some(mut debugger) => match debugger.run(&mut system) {
-            Ok(state) => {
-                eprintln!("Disconnected from GDB. Target state: {:?}", state);
-                // TODO: if the debugging session is closed, but the system isn't halted,
-                // execution should continue.
+        Some(ref mut debugger) => match debugger.run(&mut system) {
+            Ok(DisconnectReason::Disconnect) => {
+                eprintln!("Disconnected from GDB. Shutting down.");
+                system.run()
+            }
+            Ok(DisconnectReason::TargetHalted) => {
+                eprintln!("Target halted!");
                 Ok(())
             }
-            Err(gdbstub::Error::TargetError(e)) => Err(e),
+            Ok(DisconnectReason::Kill) => {
+                eprintln!("GDB sent a kill command!");
+                return Ok(());
+            }
+            Err(GdbStubError::TargetError(e)) => Err(e),
             Err(e) => return Err(e.into()),
         },
         // just run the system until it finishes, or an error occurs
@@ -121,12 +131,28 @@ fn main() -> Result<(), Box<dyn StdError>> {
     };
 
     if let Err(fatal_error) = system_result {
-        eprintln!("Fatal Error! Dumping system state...");
-        eprintln!("============");
-        eprintln!("{:#010x?}", system);
-        eprintln!("Cause: {:#010x?}", fatal_error);
-        eprintln!("============");
-        return Err("Fatal Error!".into());
+        error!("Fatal Error! Caused by: {:#010x?}", fatal_error);
+        error!("Dumping system state to {}", SYSDUMP_FILENAME);
+
+        std::fs::write(
+            SYSDUMP_FILENAME,
+            format!(
+                "Fatal Error! Caused by: {:#010x?}\n\n{:#x?}",
+                fatal_error, system
+            ),
+        )?;
+
+        if let Some(mut debugger) = debugger {
+            info!("Resuming the debugging session in \"post-mortem\" mode.");
+            warn!("Step/Continue will not work.");
+            system.freeze();
+            match debugger.run(&mut system) {
+                Ok(_) => info!("Disconnected from post-mortem GDB session."),
+                Err(e) => return Err(e.into()),
+            }
+        } else {
+            return Err("Fatal Error!".into());
+        }
     }
 
     Ok(())

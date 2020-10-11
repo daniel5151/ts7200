@@ -4,7 +4,6 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crossbeam_channel::{self as chan, select};
-use log::*;
 
 use crate::devices::{vic::Interrupt, Device, Probe};
 use crate::memory::{MemException::*, MemResult, Memory};
