@@ -66,6 +66,10 @@ struct Args {
     /// HACK: Give UARTs infinite rx FIFOs.
     #[structopt(long)]
     hack_inf_uart_rx: bool,
+
+    /// Disable all Address Sanitizer warnings from the RAM.
+    #[structopt(long)]
+    no_asan_ram: bool,
 }
 
 fn wait_for_tcp(port: u16) -> Result<TcpStream, Box<dyn StdError>> {
@@ -101,6 +105,9 @@ fn main() -> Result<(), Box<dyn StdError>> {
         system.devices_mut().uart1.hack_set_infinite_rx(true);
         system.devices_mut().uart2.hack_set_infinite_rx(true);
     }
+
+    // asan ram
+    system.devices_mut().sdram.set_asan(!args.no_asan_ram);
 
     // (potentially) spin up the debugger
     let mut debugger = match args.gdbport {

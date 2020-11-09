@@ -10,6 +10,8 @@ use crate::memory::{
 
 /// Basic fixed-size RAM module.
 pub struct Ram {
+    asan: bool,
+
     mem: Vec<u8>,
     initialized: Vec<bool>,
 }
@@ -24,9 +26,15 @@ impl Ram {
     /// size in bytes
     pub fn new(size: usize) -> Ram {
         Ram {
+            asan: true,
+
             mem: vec![b'-'; size], // non-zero value to make it easier to spot bugs
             initialized: vec![false; size],
         }
+    }
+
+    pub fn set_asan(&mut self, active: bool) {
+        self.asan = active;
     }
 
     pub fn new_with_data(size: usize, data: &[u8]) -> Ram {
@@ -87,7 +95,7 @@ impl Memory for Ram {
     fn r8(&mut self, offset: u32) -> MemResult<u8> {
         let offset = offset as usize;
         let val = self.mem[offset];
-        if !self.initialized[offset] {
+        if self.asan && !self.initialized[offset] {
             return Err(self.uninit_read(offset, 1, val as u32));
         }
         Ok(val)
@@ -96,7 +104,7 @@ impl Memory for Ram {
     fn r16(&mut self, offset: u32) -> MemResult<u16> {
         let offset = offset as usize;
         let val = LittleEndian::read_u16(&self.mem[offset..offset + 2]);
-        if self.initialized[offset..offset + 2] != [true; 2] {
+        if self.asan && self.initialized[offset..offset + 2] != [true; 2] {
             return Err(self.uninit_read(offset, 2, val as u32));
         }
         Ok(val)
@@ -105,7 +113,7 @@ impl Memory for Ram {
     fn r32(&mut self, offset: u32) -> MemResult<u32> {
         let offset = offset as usize;
         let val = LittleEndian::read_u32(&self.mem[offset..offset + 4]);
-        if self.initialized[offset..offset + 4] != [true; 4] {
+        if self.asan && self.initialized[offset..offset + 4] != [true; 4] {
             // gcc likes to emit 8-bit store instructions, but later read those values via
             // 32 bit read instructions. To squelch these errors, word-aligned reads are
             // allowed to return partially uninitialized words.
