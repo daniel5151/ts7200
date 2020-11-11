@@ -311,11 +311,13 @@ pub struct Ts7200Bus {
     pub timer3: devices::Timer,
     pub uart1: devices::Uart,
     pub uart2: devices::Uart,
+    pub uart3_hack: Option<devices::Uart>,
     pub vicmgr: devices::vic::VicManager,
+
+    interrupt_bus: chan::Sender<(Interrupt, bool)>,
 }
 
 impl Ts7200Bus {
-    #[allow(clippy::redundant_clone)] // Makes the code cleaner in this case
     fn new_hle(interrupt_bus: chan::Sender<(Interrupt, bool)>) -> Ts7200Bus {
         use devices::*;
         Ts7200Bus {
@@ -326,8 +328,20 @@ impl Ts7200Bus {
             timer3: Timer::new("timer3", interrupt_bus.clone(), Interrupt::Tc3Ui, 32),
             uart1: Uart::new_hle("uart1", interrupt_bus.clone(), uart::interrupts::UART1),
             uart2: Uart::new_hle("uart2", interrupt_bus.clone(), uart::interrupts::UART2),
+            uart3_hack: None,
             vicmgr: vic::VicManager::new(),
+
+            interrupt_bus,
         }
+    }
+
+    pub fn hack_uart3_enable(&mut self) {
+        use devices::*;
+        self.uart3_hack = Some(Uart::new_hle(
+            "uart3_hack",
+            self.interrupt_bus.clone(),
+            uart::interrupts::UART3,
+        ));
     }
 }
 
@@ -393,5 +407,6 @@ ts7200_mmap! {
     0x8081_0080..=0x8081_009f => timer3,
     0x808c_0000..=0x808c_ffff => uart1,
     0x808d_0000..=0x808d_ffff => uart2,
+    0x808e_0000..=0x808e_ffff => uart3_hack,
     0x8093_0000..=0x8093_ffff => syscon,
 }

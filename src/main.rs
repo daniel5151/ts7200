@@ -53,11 +53,21 @@ HACKS:
     These hacks should be used with extreme caution, as they greatly compromise
     the emulator's accuracy.
 
-    --hack-inf-uart-rx=[1|2]
+    --hack-uart3-enable
+        Enables a virtual "UART3" mapped at 0x808e_0000. When used in
+        conjunction with --hack-nodelay-uart-tx, UART3 can be a useful
+        emulator-only non-intrusive debugging tool.
+
+        Just remember: The TS-7200 only has 2 UARTs, and trying to access UART3
+        on actual hardware will result in undefined behavior! This virtual UART3
+        is NOT the same UART3 as the one specified in the EP93xx user's guide!
+        UART3 is just a clone of UART2 with different VIC interrupts.
+
+    --hack-inf-uart-rx=[1|2|3]
         Gives the specified UART an infinite rx FIFO. This hack allows the
         MarklinSim to work properly ts7200's "always-on" CTS implementation.
 
-    --hack-nodelay-uart-tx=[1|2]
+    --hack-nodelay-uart-tx=[1|2|3]
         Disables all tx output delay on the specified UART. This hack is useful
         for `bwprintf` debugging time sensitive code (as at the time of writing,
         the GDB server doesn't actually "stop the clock" when paused).
@@ -77,6 +87,14 @@ struct Args {
     /// UART2 configuration.
     #[structopt(long, value_name = "cfg", default_value = "stdio")]
     uart2: uart::UartCfg,
+
+    /// HACK: see --hack-uart3-enable
+    #[structopt(long, value_name = "cfg", default_value = "none")]
+    hack_uart3: uart::UartCfg,
+
+    /// Enable a virtual UART3 mapped at 0x808e_0000.
+    #[structopt(long)]
+    hack_uart3_enable: bool,
 
     /// HACK: Give UARTs infinite rx FIFOs.
     #[structopt(long, value_name = "uart")]
@@ -111,24 +129,48 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let args = Args::from_args();
 
+    let num_stdio_uarts = [&args.uart1, &args.uart2, &args.hack_uart3]
+        .iter()
+        .map(|cfg| matches!(cfg, uart::UartCfg::Stdio { .. }))
+        .filter(|x| *x)
+        .count();
+    if num_stdio_uarts > 1 {
+        return Err("only one UART can use stdio".into());
+    }
+
     // create the base system
     let file = fs::File::open(args.kernel_elf)?;
     let mut system = Ts7200::new_hle(file)?;
 
+    // apply uart hax
+    if args.hack_uart3_enable {
+        system.devices_mut().hack_uart3_enable();
+    }
+
     // hook up the uarts
     args.uart1.apply(&mut system.devices_mut().uart1)?;
     args.uart2.apply(&mut system.devices_mut().uart2)?;
+    if let Some(uart3) = &mut system.devices_mut().uart3_hack {
+        args.hack_uart3.apply(uart3)?;
+    }
 
-    // apply hax
+    // apply uart hax
     {
         let devices = system.devices_mut();
+
         let uart1 = &mut devices.uart1;
         let uart2 = &mut devices.uart2;
+        let uart3 = &mut devices.uart3_hack;
 
         for uart in args.hack_inf_uart_rx {
             match uart {
                 1 => uart1.hack_inf_uart_rx(true),
                 2 => uart2.hack_inf_uart_rx(true),
+                3 => {
+                    if let Some(uart3) = uart3 {
+                        uart3.hack_inf_uart_rx(true)
+                    }
+                }
                 _ => return Err("invalid uart".into()),
             }
         }
@@ -137,6 +179,11 @@ fn main() -> Result<(), Box<dyn StdError>> {
             match uart {
                 1 => uart1.hack_nodelay_uart_tx(true),
                 2 => uart2.hack_nodelay_uart_tx(true),
+                3 => {
+                    if let Some(uart3) = uart3 {
+                        uart3.hack_nodelay_uart_tx(true)
+                    }
+                }
                 _ => return Err("invalid uart".into()),
             }
         }

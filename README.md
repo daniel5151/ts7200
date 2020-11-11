@@ -54,6 +54,10 @@ There are quite a few features present in the emulator which are _not_ available
 - Emulated devices emit `ContractViolation` errors if they are accessed "incorrectly", instead of silently-failing as they would on real hardware. Keep an eye on those `stderr` logs!
     - e.g: Accessing Uninitialized RAM logs a warning to stderr
     - e.g: Trying to enable a timer without giving it an initial value throws a fatal error
+- (optional) Add a virtual UART3 device mapped at 0x808e_0000 (using the `--hack-uart3-enable` flag)
+    - When used in conjunction with `--hack-nodelay-uart-tx` and `--hack-uart3=file:/dev/pts/X`, a virtual UART3 can be a useful _non-intrusive_ (unlike GDB, which "stops the world") debugging tool!
+    - **Just Remember:** The TS-7200 only has 2 UARTs, and trying to access UART3 on actual hardware will result in _undefined behavior!_ This virtual UART3 is NOT the same UART3 as the one specified in the EP93xx user's guide! UART3 is just a clone of UART2 with different VIC interrupts.
+
 
 ## Emulator Quirks
 

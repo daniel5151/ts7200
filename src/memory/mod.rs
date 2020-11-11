@@ -85,3 +85,50 @@ macro_rules! impl_memfwd {
 
 impl_memfwd!(Box<dyn Memory>);
 impl_memfwd!(&mut dyn Memory);
+
+impl<T> Memory for Option<T>
+where
+    T: Memory,
+{
+    fn r32(&mut self, offset: u32) -> MemResult<u32> {
+        match self {
+            Some(dev) => dev.r32(offset),
+            None => Err(MemException::Unexpected),
+        }
+    }
+
+    fn w32(&mut self, offset: u32, val: u32) -> MemResult<()> {
+        match self {
+            Some(dev) => dev.w32(offset, val),
+            None => Err(MemException::Unexpected),
+        }
+    }
+
+    fn r8(&mut self, offset: u32) -> MemResult<u8> {
+        match self {
+            Some(dev) => dev.r8(offset),
+            None => Err(MemException::Unexpected),
+        }
+    }
+
+    fn r16(&mut self, offset: u32) -> MemResult<u16> {
+        match self {
+            Some(dev) => dev.r16(offset),
+            None => Err(MemException::Unexpected),
+        }
+    }
+
+    fn w8(&mut self, offset: u32, val: u8) -> MemResult<()> {
+        match self {
+            Some(dev) => dev.w8(offset, val),
+            None => Err(MemException::Unexpected),
+        }
+    }
+
+    fn w16(&mut self, offset: u32, val: u16) -> MemResult<()> {
+        match self {
+            Some(dev) => dev.w16(offset, val),
+            None => Err(MemException::Unexpected),
+        }
+    }
+}

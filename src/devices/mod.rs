@@ -51,6 +51,29 @@ impl_devfwd!(Box<dyn Device>);
 impl_devfwd!(&dyn Device);
 impl_devfwd!(&mut dyn Device);
 
+impl<D: Device> Device for Option<D> {
+    fn kind(&self) -> &'static str {
+        match self {
+            Some(dev) => dev.kind(),
+            None => "<unmapped>",
+        }
+    }
+
+    fn label(&self) -> Option<&str> {
+        match self {
+            Some(dev) => dev.label(),
+            None => None,
+        }
+    }
+
+    fn probe(&self, offset: u32) -> Probe<'_> {
+        match self {
+            Some(dev) => dev.probe(offset),
+            None => Probe::Unmapped,
+        }
+    }
+}
+
 /// A link in a chain of devices corresponding to a particular memory offset.
 pub enum Probe<'a> {
     /// Branch node representing a device.
