@@ -55,7 +55,8 @@ const UARTCLK_HZ: u64 = 7_372_800;
 struct State {
     label: &'static str,
     interrupts: UartInterrupts,
-    hack_inf_rx: bool,
+    hack_inf_uart_rx: bool,
+    hack_nodelay_uart_tx: bool,
 
     linctrl_latched: bool,
     linctrl_latch: [u32; 3],
@@ -85,7 +86,8 @@ impl State {
         let mut s = State {
             label,
             interrupts,
-            hack_inf_rx: false,
+            hack_inf_uart_rx: false,
+            hack_nodelay_uart_tx: false,
 
             linctrl_latched: false,
             linctrl_latch: [0, 0, 0],
@@ -237,7 +239,7 @@ fn spawn_input_buffer_thread(
                 thread::sleep(bittime * word_len);
 
                 let mut state = state.lock().unwrap();
-                if state.rx_buf.len() < state.fifo_size || state.hack_inf_rx {
+                if state.rx_buf.len() < state.fifo_size || state.hack_inf_uart_rx {
                     state.rx_buf.push_back(b);
                     state.update_interrupts(&interrupt_bus);
                 } else {
@@ -296,7 +298,7 @@ fn spawn_output_buffer_thread(
             };
 
             // Sleep for the appropriate time
-            let (bittime, word_len) = {
+            let (bittime, word_len, hack_nodelay_uart_tx) = {
                 let mut state = state.lock().unwrap();
                 if !state.busy {
                     state.busy = true;
@@ -304,9 +306,13 @@ fn spawn_output_buffer_thread(
                     state.update_interrupts(&interrupt_bus);
                 }
 
-                (state.bittime, state.word_len)
+                (state.bittime, state.word_len, state.hack_nodelay_uart_tx)
             };
-            thread::sleep(bittime * word_len);
+
+            if !hack_nodelay_uart_tx {
+                thread::sleep(bittime * word_len);
+            }
+
             match uart_tx.send(b) {
                 Ok(()) => (),
                 Err(chan::SendError(_)) => {
@@ -504,8 +510,13 @@ impl Uart {
     }
 
     /// HACK: sets the UART to have an infinite RX FIFO
-    pub fn hack_set_infinite_rx(&mut self, active: bool) {
-        self.state.lock().unwrap().hack_inf_rx = active;
+    pub fn hack_inf_uart_rx(&mut self, active: bool) {
+        self.state.lock().unwrap().hack_inf_uart_rx = active;
+    }
+
+    /// HACK: Disables all tx output delay on the UART.
+    pub fn hack_nodelay_uart_tx(&mut self, active: bool) {
+        self.state.lock().unwrap().hack_nodelay_uart_tx = active;
     }
 }
 

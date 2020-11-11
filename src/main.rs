@@ -23,7 +23,13 @@ const SYSDUMP_FILENAME: &str = "sysdump.log";
 #[structopt(name = "ts7200")]
 #[structopt(about = r#"
 An emulator for the TS-7200 Single Board Computer, as used in CS 452 at the
-University of Waterloo.
+University of Waterloo. Written by Daniel Prilik <danielprilik@gmail.com>
+and Sean Purcell <me@seanp.xyz>.
+
+                ********************************************
+                * IF LOGS ARE SMEARING ACROSS THE TERMINAL *
+                *             READ THE README!             *
+                ********************************************
 
 UART CONFIGURATION:
     The `--uartX` flags accept a configuration string. The format is closely
@@ -39,33 +45,46 @@ UART CONFIGURATION:
         - Sets the terminal to "raw" mode
     * tcp:[host]:port
         - Connect to a tcp server
-        - "host" defaults to localhost
+        - "host" defaults to 127.0.0.1 (localhost)
 
     e.g: `--uart1=file:/dev/null,in=/tmp/trainin.pipe`, `--uart1=tcp::3018`
 
 HACKS:
-    --hack-inf-uart-rx    Work around for using the MarklinSim with the current
-                          "always-on" CTS implementation.
+    These hacks should be used with extreme caution, as they greatly compromise
+    the emulator's accuracy.
+
+    --hack-inf-uart-rx=[1|2]
+        Gives the specified UART an infinite rx FIFO. This hack allows the
+        MarklinSim to work properly ts7200's "always-on" CTS implementation.
+
+    --hack-nodelay-uart-tx=[1|2]
+        Disables all tx output delay on the specified UART. This hack is useful
+        for `bwprintf` debugging time sensitive code (as at the time of writing,
+        the GDB server doesn't actually "stop the clock" when paused).
 "#)]
 struct Args {
     /// kernel ELF file to load
     kernel_elf: String,
 
     /// Spawn a gdb server listening on the specified port
-    #[structopt(short, long)]
+    #[structopt(short, long, value_name = "port")]
     gdbport: Option<u16>,
 
     /// UART1 configuration.
-    #[structopt(long, default_value = "none")]
+    #[structopt(long, value_name = "cfg", default_value = "none")]
     uart1: uart::UartCfg,
 
     /// UART2 configuration.
-    #[structopt(long, default_value = "stdio")]
+    #[structopt(long, value_name = "cfg", default_value = "stdio")]
     uart2: uart::UartCfg,
 
     /// HACK: Give UARTs infinite rx FIFOs.
-    #[structopt(long)]
-    hack_inf_uart_rx: bool,
+    #[structopt(long, value_name = "uart")]
+    hack_inf_uart_rx: Vec<usize>,
+
+    /// HACK: Disables all tx output delay on the UARTs.
+    #[structopt(long, value_name = "uart")]
+    hack_nodelay_uart_tx: Vec<usize>,
 
     /// Disable all Address Sanitizer warnings from the RAM.
     #[structopt(long)]
@@ -101,9 +120,26 @@ fn main() -> Result<(), Box<dyn StdError>> {
     args.uart2.apply(&mut system.devices_mut().uart2)?;
 
     // apply hax
-    if args.hack_inf_uart_rx {
-        system.devices_mut().uart1.hack_set_infinite_rx(true);
-        system.devices_mut().uart2.hack_set_infinite_rx(true);
+    {
+        let devices = system.devices_mut();
+        let uart1 = &mut devices.uart1;
+        let uart2 = &mut devices.uart2;
+
+        for uart in args.hack_inf_uart_rx {
+            match uart {
+                1 => uart1.hack_inf_uart_rx(true),
+                2 => uart2.hack_inf_uart_rx(true),
+                _ => return Err("invalid uart".into()),
+            }
+        }
+
+        for uart in args.hack_nodelay_uart_tx {
+            match uart {
+                1 => uart1.hack_nodelay_uart_tx(true),
+                2 => uart2.hack_nodelay_uart_tx(true),
+                _ => return Err("invalid uart".into()),
+            }
+        }
     }
 
     // asan ram

@@ -36,7 +36,13 @@ Run `ts7200 --help` for information on how to use the emulator.
 
 **Make sure to redirect the emulator's `stderr` to a file / tty!**
 
-By default, the emulator will put the tty into "raw" mode, which doesn't play nicely with the the logging information output via `stderr`. When `stderr` outputs text to the tty, it will end up "smearing" it across the terminal. This can be fixed by redirecting `ts7200`'s `stderr` to a separate tty: `ts7200 ... 2> /dev/pts/X`.
+By default, the emulator puts the tty into "raw" mode (as part of the --uart2 default config). This clashes with the logging info being sent over `stderr`, and the two end up intertwining and "smearing" across the terminal.
+
+This can be avoided by redirecting `ts7200`'s `stderr` to a separate tty:
+
+1. open a new terminal window
+2. run the `tty` command to get it's corresponding tty device
+3. redirect the output when running ts7200: `ts7200 [...] 2> /dev/pts/X`
 
 ## Emulator Enhancements
 
@@ -56,7 +62,8 @@ There are quite a few features present in the emulator which are _not_ available
     - This could be fixed by implemented a "leader-key" system, similar to tmux. PRs welcome!
 - GDB Debugging "breaks" in the presence of Timer interrupts
     - Trying to step to the next instruction will most-likely result in GDB jumping to the IRQ handler instead
-    - This can be worked-around by avoiding the `n` and `s` GDB commands when debugging code with IRQs, and instead setting specific breakpoints via `b` to "step" through the code. Yes, it's annoying. Sorry!
+    - This can be worked-around by avoiding the `n` and `s` GDB commands when debugging code with IRQs, and instead setting specific breakpoints via `b` to "step" through the code.
+    - _Note:_ It should be possible to fix this by artificially disabling interrupts when single-stepping in the GDB implementation. A PR to implement this functionality would be much appreciated!
 
 ## Project Status
 
