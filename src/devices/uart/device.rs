@@ -184,7 +184,7 @@ impl State {
             };
         }
 
-        update_interrupt!(self.interrupts.tx, self.tx_int_asserted, 0b1000);
+        update_interrupt!(self.interrupts.tx, self.tx_int_asserted, 0b0100);
         update_interrupt!(self.interrupts.rx, self.rx_int_asserted, 0b0010);
         update_interrupt!(self.interrupts.combo, self.combo_int_asserted, 0b1111);
     }
